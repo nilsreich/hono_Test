@@ -1,0 +1,18 @@
+/**
+ * @file routes/index.ts
+ * @description Barrel-Export für alle Route-Module.
+ * 
+ * PATTERN: Route Factory Functions
+ * - Jede Route-Datei exportiert eine Factory-Funktion
+ * - Factory erhält Konfiguration (z.B. jwtSecret)
+ * - Gibt konfigurierten Hono-Router zurück
+ * 
+ * VORTEILE:
+ * - Dependency Injection für Tests
+ * - Klare Trennung der Verantwortlichkeiten
+ * - Einfaches Hinzufügen neuer Routen
+ */
+
+export { createAuthRoutes } from './auth'
+export { createEntriesRoutes } from './entries'
+export { createHealthRoutes } from './health'
