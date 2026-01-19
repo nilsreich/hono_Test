@@ -199,5 +199,258 @@ bun run index.ts
 
 ---
 
-## 📜 Lizenz
+## � Programmabläufe (Flow Diagrams)
+
+Die folgenden Diagramme zeigen die wichtigsten Abläufe in der Anwendung.
+
+### 🔐 Registrierung (Signup)
+
+```mermaid
+sequenceDiagram
+    participant User as 👤 User
+    participant UI as 🖥️ AuthForm
+    participant Hook as 🪝 useAuth
+    participant API as 📡 api.ts
+    participant Server as 🖧 Backend
+    participant DB as 💾 SQLite
+
+    User->>UI: Füllt Formular aus
+    UI->>Hook: signup(username, password)
+    Hook->>Hook: setLoading(true)
+    Hook->>API: authApi.signup()
+    API->>Server: POST /api/signup
+    
+    Note over Server: Rate Limit Check (5/min)
+    
+    Server->>Server: validateAuth()
+    
+    alt Validierung fehlgeschlagen
+        Server-->>API: 400 { error }
+        API-->>Hook: { error }
+        Hook-->>UI: setError(message)
+        UI-->>User: ❌ Zeigt Fehler
+    end
+    
+    Server->>Server: Bun.password.hash()
+    Server->>DB: INSERT INTO users
+    
+    alt Username existiert
+        DB-->>Server: UNIQUE constraint error
+        Server-->>API: 400 "User already exists"
+        API-->>Hook: { error }
+        Hook-->>UI: setError()
+        UI-->>User: ❌ Zeigt Fehler
+    end
+    
+    DB-->>Server: ✓ User erstellt
+    Server-->>API: 200 { success: true }
+    API-->>Hook: { success }
+    Hook-->>UI: setError("Erfolgreich!")
+    UI-->>User: ✅ Wechselt zu Login
+```
+
+### 🔑 Login
+
+```mermaid
+sequenceDiagram
+    participant User as 👤 User
+    participant UI as 🖥️ AuthForm
+    participant Hook as 🪝 useAuth
+    participant API as 📡 api.ts
+    participant Server as 🖧 Backend
+    participant DB as 💾 SQLite
+    participant Storage as 💾 LocalStorage
+
+    User->>UI: Gibt Credentials ein
+    UI->>Hook: login(username, password)
+    Hook->>API: authApi.login()
+    API->>Server: POST /api/login
+    
+    Note over Server: Rate Limit Check (10/min)
+    
+    Server->>Server: validateAuth()
+    Server->>DB: SELECT * FROM users WHERE username = ?
+    
+    alt User nicht gefunden
+        DB-->>Server: null
+        Server-->>API: 401 "Invalid credentials"
+        API-->>Hook: { error, status: 401 }
+        Hook-->>UI: setError()
+        UI-->>User: ❌ Zeigt Fehler
+    end
+    
+    DB-->>Server: User { id, password_hash }
+    Server->>Server: Bun.password.verify()
+    
+    alt Passwort falsch
+        Server-->>API: 401 "Invalid credentials"
+        API-->>Hook: { error }
+        Hook-->>UI: setError()
+        UI-->>User: ❌ Zeigt Fehler
+    end
+    
+    Server->>Server: jwt.sign({ id, username }, secret)
+    Server-->>API: 200 { token }
+    API-->>Hook: { data: { token } }
+    Hook->>Storage: tokenStorage.set(token)
+    Hook->>Hook: setToken(token)
+    Hook-->>UI: isAuthenticated = true
+    UI-->>User: ✅ Zeigt Dashboard
+```
+
+### 🚪 Logout
+
+```mermaid
+sequenceDiagram
+    participant User as 👤 User
+    participant UI as 🖥️ Button
+    participant Hook as 🪝 useAuth
+    participant Storage as 💾 LocalStorage
+    participant Entries as 🪝 useEntries
+
+    User->>UI: Klickt "Logout"
+    UI->>Hook: logout()
+    Hook->>Storage: tokenStorage.remove()
+    Storage-->>Hook: ✓ Token gelöscht
+    Hook->>Hook: setToken('')
+    
+    Note over Hook,Entries: Token ist leer →<br/>isAuthenticated = false
+    
+    Hook-->>UI: State Update
+    UI-->>User: 🔄 Zeigt Login-Formular
+    
+    Note over User,Storage: Kein Server-Request nötig!<br/>JWT ist stateless - Token<br/>wird einfach verworfen.
+```
+
+### 📝 Eintrag erstellen
+
+```mermaid
+sequenceDiagram
+    participant User as 👤 User
+    participant Form as 🖥️ EntryForm
+    participant Hook as 🪝 useEntries
+    participant API as 📡 api.ts
+    participant Server as 🖧 Backend
+    participant JWT as 🔐 JWT Middleware
+    participant DB as 💾 SQLite
+
+    User->>Form: Gibt Text ein, klickt "Senden"
+    Form->>Form: Validiert (nicht leer)
+    Form->>Hook: addEntry(text)
+    Hook->>API: entriesApi.create(token, text)
+    API->>Server: POST /api/entries<br/>Header: Authorization: Bearer {token}
+    
+    Server->>JWT: jwt({ secret, alg: 'HS256' })
+    
+    alt Token ungültig/abgelaufen
+        JWT-->>Server: 401 Unauthorized
+        Server-->>API: 401
+        API-->>Hook: { status: 401 }
+        Hook->>Hook: onUnauthorized() → logout()
+        Hook-->>Form: Redirect zu Login
+    end
+    
+    JWT-->>Server: payload { id, username }
+    Server->>Server: validateEntryText(text)
+    
+    alt Text ungültig
+        Server-->>API: 400 { error }
+        API-->>Hook: { error }
+        Hook-->>Form: setError()
+        Form-->>User: ❌ Zeigt Fehler
+    end
+    
+    Server->>DB: INSERT INTO entries (text, userId)
+    DB-->>Server: ✓ Entry erstellt
+    Server-->>API: 200 { success: true }
+    API-->>Hook: { success }
+    Hook->>Hook: fetchEntries() → Refresh
+    Hook-->>Form: ✓ Success
+    Form->>Form: setInputText('')
+    Form-->>User: ✅ Neuer Eintrag sichtbar
+```
+
+### 📊 App-Start (Einträge laden)
+
+```mermaid
+sequenceDiagram
+    participant Browser as 🌐 Browser
+    participant App as 🖥️ App.tsx
+    participant Auth as 🪝 useAuth
+    participant Entries as 🪝 useEntries
+    participant Storage as 💾 LocalStorage
+    participant API as 📡 api.ts
+    participant Server as 🖧 Backend
+
+    Browser->>App: Lädt Seite
+    App->>Auth: useAuth()
+    Auth->>Storage: tokenStorage.get()
+    
+    alt Kein Token
+        Storage-->>Auth: null
+        Auth-->>App: isAuthenticated = false
+        App-->>Browser: 🔐 Zeigt Login
+    end
+    
+    Storage-->>Auth: token
+    Auth->>Auth: setToken(token)
+    Auth-->>App: isAuthenticated = true
+    
+    App->>Entries: useEntries(token, logout)
+    
+    Note over Entries: useEffect() bei<br/>Token-Änderung
+    
+    Entries->>API: entriesApi.getAll(token)
+    API->>Server: GET /api/entries
+    Server->>Server: JWT validieren
+    Server->>Server: DB Query für userId
+    Server-->>API: 200 [ entries... ]
+    API-->>Entries: { data: entries }
+    Entries->>Entries: setEntries(data)
+    Entries-->>App: entries = [...]
+    App-->>Browser: 📋 Zeigt Einträge
+```
+
+### 🏛️ Architektur-Übersicht
+
+```mermaid
+graph TB
+    subgraph "🖥️ Frontend - React SPA"
+        UI["📦 Components<br/>(Button, Card, AuthForm...)"]
+        Hooks["🪝 Custom Hooks<br/>(useAuth, useEntries)"]
+        APIClient["📡 api.ts<br/>(Fetch Wrapper)"]
+        Storage["💾 storage.ts<br/>(LocalStorage)"]
+    end
+    
+    subgraph "🖧 Backend - Hono + Bun"
+        Routes["🛤️ Routes<br/>(auth, entries, health)"]
+        MW["🛡️ Middleware<br/>(JWT, RateLimit)"]
+        Val["✅ Validation"]
+        Repo["📚 Repositories"]
+        DB[("💾 SQLite")]
+    end
+    
+    UI --> Hooks
+    Hooks --> APIClient
+    Hooks --> Storage
+    APIClient -->|"HTTP/JSON"| Routes
+    Routes --> MW
+    Routes --> Val
+    Routes --> Repo
+    Repo --> DB
+    
+    style UI fill:#61dafb,color:#000
+    style Hooks fill:#61dafb,color:#000
+    style APIClient fill:#61dafb,color:#000
+    style Storage fill:#61dafb,color:#000
+    style Routes fill:#ff6b6b,color:#000
+    style MW fill:#ff6b6b,color:#000
+    style Val fill:#ff6b6b,color:#000
+    style Repo fill:#ff6b6b,color:#000
+    style DB fill:#ffd93d,color:#000
+```
+
+---
+
+## �📜 Lizenz
 MIT
