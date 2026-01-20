@@ -1,0 +1,21 @@
+# Node & Bun
+node_modules/
+bun.lock
+.env
+.env.*
+
+# Data
+data/sqlite/data.sqlite
+data/sqlite/data.sqlite-journal
+data/uploads/*
+!data/uploads/.gitkeep
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.log
+
+# OS
+.DS_Store
+Thumbs.db

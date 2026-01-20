@@ -11,3 +11,5 @@
 export { useAuth } from './useAuth'
 export { useEntries } from './useEntries'
 export { useFiles } from './useFiles'
+export { useChat } from './useChat'
+export { useOnlineStatus } from './useOnlineStatus'

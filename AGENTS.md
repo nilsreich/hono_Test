@@ -14,7 +14,8 @@ Dieses Dokument definiert die Regeln und Best Practices für KI-Coding-Agents, d
 - **Backend:** Hono (Middleware-basiert, modulare Routes)
 - **Validation:** Zod v4 + `@hono/zod-validator` (NICHT manuelle Validierung)
 - **Security:** `secureHeaders()` Middleware (XSS, HSTS, nosniff, SAMEORIGIN)
-- **Frontend:** React 19 SPA (Vite + `@tailwindcss/vite` + PWA Support)
+- **Frontend:** React 19 SPA (Vite 6 + `@tailwindcss/vite` + PWA Support)
+- **State Management:** TanStack Query v5 (Caching, Optimistic Updates, Offline-First)
 - **DB:** SQLite via `bun:sqlite` (immer Prepared Statements!)
 - **Code Quality:** ESLint + Prettier (konfiguriert im Root)
 
@@ -27,23 +28,27 @@ Dieses Dokument definiert die Regeln und Best Practices für KI-Coding-Agents, d
 /backend
 ├── index.ts              # Einstiegspunkt: App-Setup, Route-Mounting, Static Serving, secureHeaders
 ├── db/
-│   └── index.ts          # DB-Initialisierung & Repository-Funktionen (userRepository, entryRepository, fileRepository)
+│   └── index.ts          # DB-Initialisierung & Repository-Funktionen
 ├── middleware/
 │   ├── index.ts          # Middleware-Exports
 │   └── rateLimit.ts      # Rate-Limiting Middleware
 ├── routes/
-│   ├── auth.ts           # /api/login, /api/signup (mit Zod-Validierung)
-│   ├── entries.ts        # /api/entries (CRUD, JWT-geschützt, Zod-Validierung)
-│   ├── files.ts          # /api/files (File-Upload, JWT-geschützt)
+│   ├── auth.ts           # /api/login, /api/signup
+│   ├── chat.ts           # /api/chat (WebSocket)
+│   ├── entries.ts        # /api/entries
+│   ├── files.ts          # /api/files
 │   ├── health.ts         # /api/health
-│   ├── password-reset.ts # /api/forgot-password, /api/reset-password (Resend E-Mail)
+│   ├── password-reset.ts # /api/forgot-password, /api/reset-password
 │   └── index.ts          # Route-Exports
 ├── types/
-│   └── index.ts          # Shared Types (User, Entry, FileMetadata, JwtPayload)
-├── uploads/              # Datei-Uploads (nach User-ID organisiert)
+│   └── index.ts          # Shared Types
 └── validation/
     ├── index.ts          # Validierungsfunktionen & Schema-Exports
-    └── schemas.ts        # Zod-Schemas (authSchema, entrySchema, fileMetadataSchema, forgotPasswordSchema, resetPasswordSchema)
+    └── schemas.ts        # Zod-Schemas
+
+/data
+├── sqlite/               # SQLite-Datenbank (data.sqlite)
+└── uploads/              # Datei-Uploads (nach User-ID organisiert)
 ```
 
 **Wichtige Prinzipien:**
@@ -56,13 +61,15 @@ Dieses Dokument definiert die Regeln und Best Practices für KI-Coding-Agents, d
 ```
 /frontend/src
 ├── App.tsx               # Haupt-Komponente (verwendet Hooks & Components)
+├── main.tsx              # React-Einstiegspunkt mit TanStack Query Provider
 ├── components/
 │   ├── index.ts          # Barrel-Export für alle Komponenten
 │   ├── ui/               # Wiederverwendbare UI-Bausteine
 │   │   ├── Alert.tsx
 │   │   ├── Button.tsx
 │   │   ├── Card.tsx
-│   │   └── Input.tsx
+│   │   ├── Input.tsx
+│   │   └── OfflineBanner.tsx  # Offline-Status Anzeige
 │   ├── auth/             # Auth-spezifische Komponenten
 │   │   ├── AuthForm.tsx
 │   │   ├── ForgotPasswordForm.tsx
@@ -74,24 +81,29 @@ Dieses Dokument definiert die Regeln und Best Practices für KI-Coding-Agents, d
 │   │   ├── FileList.tsx
 │   │   ├── FileUpload.tsx
 │   │   └── index.ts
+│   ├── chat/             # Chat-Komponenten
+│   │   └── Chat.tsx
 │   └── layout/           # Layout-Komponenten
 │       └── PageLayout.tsx
 ├── hooks/
 │   ├── index.ts          # Hook-Exports
 │   ├── useAuth.ts        # Authentifizierungs-State & Actions (inkl. Password Reset)
-│   ├── useEntries.ts     # Entries-State & CRUD-Operationen (Create, Read, Update, Delete)
-│   └── useFiles.ts       # Files-State & Upload-Operationen
+│   ├── useEntries.ts     # TanStack Query: CRUD mit Optimistic Updates
+│   ├── useFiles.ts       # TanStack Query: File-Operationen mit Optimistic Updates
+│   ├── useChat.ts        # WebSocket-Chat Hook
+│   └── useOnlineStatus.ts # Online/Offline-Status Tracking
 ├── lib/
 │   ├── api.ts            # Zentralisierter API-Client mit Fetch-Wrapper
-│   └── storage.ts        # LocalStorage-Abstraktion
+│   ├── storage.ts        # LocalStorage-Abstraktion
+│   └── queryClient.ts    # TanStack Query Konfiguration & Persistenz
 └── types/
     └── index.ts          # Frontend-spezifische Types
 ```
 
 **Wichtige Prinzipien:**
 - **Components:** Immer über `components/index.ts` importieren.
-- **Hooks:** Business-Logik gehört in Hooks, nicht in Komponenten.
-- **Lib:** API-Calls nur über `lib/api.ts`, nie direkt `fetch()` verwenden.
+- **Hooks:** Business-Logik gehört in Hooks (TanStack Query für Server-State).
+- **Lib:** API-Calls nur über `lib/api.ts`, Query-Konfiguration in `queryClient.ts`.
 - **Types:** Shared Types in `types/index.ts` definieren.
 
 ---
@@ -182,11 +194,121 @@ app.route('/api/tasks', createTasksRoutes(JWT_SECRET))
 2. In `hooks/index.ts` exportieren
 
 ```typescript
-// Beispiel: hooks/useTasks.ts
+// Beispiel: hooks/useTasks.ts mit TanStack Query
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { queryKeys } from '../lib/queryClient'
+
 export function useTasks(token: string) {
-  // State, API-Calls, etc.
-  return { tasks, loading, error, fetchTasks, addTask }
+  const queryClient = useQueryClient()
+
+  // Query für Daten-Fetching
+  const { data: tasks = [], isLoading, error } = useQuery({
+    queryKey: ['tasks'],
+    queryFn: async () => {
+      const res = await fetch('/api/tasks', {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+      return res.json()
+    },
+    enabled: !!token,
+  })
+
+  // Mutation mit Optimistic Update
+  const addMutation = useMutation({
+    mutationFn: async (text: string) => {
+      const res = await fetch('/api/tasks', {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}` 
+        },
+        body: JSON.stringify({ text }),
+      })
+      return res.json()
+    },
+    // Optimistic Update
+    onMutate: async (text) => {
+      await queryClient.cancelQueries({ queryKey: ['tasks'] })
+      const previous = queryClient.getQueryData(['tasks'])
+      queryClient.setQueryData(['tasks'], (old: any[]) => [
+        { id: -Date.now(), text }, // Temporäre ID
+        ...(old || [])
+      ])
+      return { previous }
+    },
+    onError: (_err, _text, context) => {
+      queryClient.setQueryData(['tasks'], context?.previous)
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['tasks'] })
+    },
+  })
+
+  return { 
+    tasks, 
+    loading: isLoading, 
+    error: error?.message,
+    addTask: (text: string) => addMutation.mutateAsync(text)
+  }
 }
+```
+
+### 🔄 TanStack Query Konfiguration
+
+Die Query-Konfiguration befindet sich in `lib/queryClient.ts`:
+
+```typescript
+// lib/queryClient.ts
+import { QueryClient } from '@tanstack/react-query'
+import { createSyncStoragePersister } from '@tanstack/query-sync-storage-persister'
+
+export const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      gcTime: 1000 * 60 * 60 * 24, // 24h Cache
+      staleTime: 1000 * 60 * 5,    // 5min "frisch"
+      networkMode: 'offlineFirst', // Offline-First
+    },
+    mutations: {
+      networkMode: 'offlineFirst', // Pausiert offline, auto-sync online
+    },
+  },
+})
+
+export const persister = createSyncStoragePersister({
+  storage: window.localStorage,
+  key: 'REACT_QUERY_OFFLINE_CACHE',
+})
+
+// Zentrale Query Keys
+export const queryKeys = {
+  entries: {
+    all: ['entries'] as const,
+    list: () => [...queryKeys.entries.all, 'list'] as const,
+  },
+  files: {
+    all: ['files'] as const,
+    list: () => [...queryKeys.files.all, 'list'] as const,
+  },
+}
+```
+
+**main.tsx Integration:**
+```tsx
+import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client'
+import { queryClient, persister } from './lib/queryClient'
+
+createRoot(document.getElementById('root')!).render(
+  <StrictMode>
+    <PersistQueryClientProvider
+      client={queryClient}
+      persistOptions={{ persister, maxAge: 1000 * 60 * 60 * 24 }}
+      onSuccess={() => queryClient.resumePausedMutations()}
+    >
+      <App />
+    </PersistQueryClientProvider>
+  </StrictMode>
+)
 ```
 
 ### 📁 File-Upload implementieren
@@ -211,7 +333,7 @@ export const MAX_FILE_SIZE = 10 * 1024 * 1024  // 10MB
 
 **Speicherstruktur:**
 ```
-/backend/uploads/
+/data/uploads/
 └── {userId}/
     └── {uuid}.{extension}
 ```
@@ -259,7 +381,7 @@ export const MAX_FILE_SIZE = 10 * 1024 * 1024  // 10MB
 
 **Speicherstruktur:**
 ```
-/backend/uploads/
+/data/uploads/
 └── {userId}/
     └── {uuid}.{extension}
 ```
@@ -273,11 +395,16 @@ Agents müssen sicherstellen, dass:
 - Passwörter immer mit `Bun.password.hash()` verarbeitet werden.
 - API-Client (`lib/api.ts`) automatisch Token-Header setzt.
 
-### 📱 PWA & Service Worker
+### 📱 PWA, Offline-First & TanStack Query
 Agents müssen sicherstellen, dass:
 - Die `sw.js` im Backend mit `Cache-Control: no-cache` serviert wird.
 - API-Routen (`/api/*`) niemals vom Service Worker gecacht werden.
 - Navigations-Requests im Backend auf die `index.html` zurückfallen (SPA-Fallback).
+- **TanStack Query** mit `networkMode: 'offlineFirst'` konfiguriert ist.
+- Mutationen **Optimistic Updates** implementieren (onMutate, onError, onSettled).
+- Der Query-Cache via `createSyncStoragePersister` im localStorage persistiert wird.
+- `PersistQueryClientProvider` in main.tsx die App wrapped.
+- `queryClient.resumePausedMutations()` beim Restore aufgerufen wird.
 
 ---
 
@@ -314,6 +441,9 @@ Falls der Agent Fehler wie `EADDRINUSE` sieht:
 - [ ] Hooks für State-Management, keine Logik in Komponenten.
 - [ ] `secureHeaders()` Middleware aktiv.
 - [ ] File-Uploads mit MIME-Type und Größen-Validierung.
+- [ ] TanStack Query mit Optimistic Updates für alle Mutationen.
+- [ ] Query-Cache im localStorage persistiert.
+- [ ] Offline-Banner zeigt Sync-Status an.
 
 ---
 
@@ -326,3 +456,6 @@ Falls der Agent Fehler wie `EADDRINUSE` sieht:
 - **Zod v4 API:** Nutze `message` statt `required_error` und `.issues` statt `.errors`.
 - **Tailwind v4:** Nutze `@tailwindcss/vite` Plugin, NICHT PostCSS-Konfiguration.
 - **React 19 useEffect:** Bei async-Operationen in useEffect `isMounted`-Pattern verwenden.
+- **Vite 7 Kompatibilität:** `vite-plugin-pwa` benötigt Vite 6 - nicht auf Vite 7 updaten.
+- **TanStack Query Keys:** Immer zentrale `queryKeys` aus `lib/queryClient.ts` verwenden.
+- **Optimistic Updates:** Immer `previousData` für Rollback speichern.

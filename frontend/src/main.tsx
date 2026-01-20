@@ -1,26 +1,51 @@
 /**
  * @file main.tsx
- * @description React-Einstiegspunkt - mountet die App ins DOM.
+ * @description React-Einstiegspunkt mit TanStack Query + Persistenz.
+ * 
+ * FEATURES:
+ * - TanStack Query v5 für Daten-Management
+ * - localStorage Persistenz für Offline-Support
+ * - Automatische Synchronisation bei Online-Status
  * 
  * STRUKTUR:
+ * - PersistQueryClientProvider: Wraps App mit Query-Persistenz
  * - StrictMode: Aktiviert zusätzliche Checks in Development
- * - createRoot: React 18+ Concurrent-Mode API
- * - index.css: Globale Styles (Tailwind)
  */
 
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
-import './index.css'  // Tailwind CSS importieren
+import { PersistQueryClientProvider } from '@tanstack/react-query-persist-client'
+import { queryClient, persister } from './lib/queryClient'
+import './index.css'
 import App from './App.tsx'
 
 /**
- * App ins DOM mounten.
+ * App ins DOM mounten mit TanStack Query Persistenz.
  * 
- * HINWEIS: '!' (Non-null assertion) ist sicher, da index.html
- * immer ein Element mit id="root" enthält.
+ * PERSISTENZ-OPTIONEN:
+ * - maxAge: 24 Stunden (wie lange Cache gültig ist)
+ * - dehydrateOptions: Nur erfolgreiche Queries persistieren
  */
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <App />
+    <PersistQueryClientProvider
+      client={queryClient}
+      persistOptions={{
+        persister,
+        maxAge: 1000 * 60 * 60 * 24, // 24 Stunden
+        dehydrateOptions: {
+          shouldDehydrateQuery: (query) => {
+            // Nur erfolgreiche Queries persistieren
+            return query.state.status === 'success'
+          },
+        },
+      }}
+      onSuccess={() => {
+        // Nach Restore: Alle stale Queries refetchen
+        queryClient.resumePausedMutations()
+      }}
+    >
+      <App />
+    </PersistQueryClientProvider>
   </StrictMode>,
 )

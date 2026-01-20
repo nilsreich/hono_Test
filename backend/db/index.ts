@@ -15,6 +15,8 @@
  */
 
 import { Database } from 'bun:sqlite'
+import { join } from 'node:path'
+import { mkdirSync } from 'node:fs'
 import type { User, Entry, FileMetadata, CreateFileInput } from '../types'
 
 // ===================
@@ -23,12 +25,13 @@ import type { User, Entry, FileMetadata, CreateFileInput } from '../types'
 
 /**
  * SQLite-Datenbankverbindung.
- * Datei wird im aktuellen Verzeichnis erstellt.
- * 
- * HINWEIS: In Produktion ggf. Pfad anpassen oder
- * über Umgebungsvariable konfigurieren.
+ * Datei wird im /data/sqlite Verzeichnis außerhalb des backend-Ordners gespeichert.
+ * Dies ermöglicht einfachere Updates des Codes, ohne die Daten zu gefährden.
  */
-const db = new Database('data.sqlite')
+const DATA_DIR = join(import.meta.dir, '..', '..', 'data', 'sqlite')
+mkdirSync(DATA_DIR, { recursive: true })
+
+const db = new Database(join(DATA_DIR, 'data.sqlite'))
 
 // ===================
 // Schema Initialization

@@ -25,8 +25,9 @@ import { mkdir } from 'node:fs/promises'
 
 // Local Modules
 import { initializeDatabase } from './db'
-import { createAuthRoutes, createEntriesRoutes, createHealthRoutes, createFilesRoutes, createPasswordResetRoutes } from './routes'
+import { createAuthRoutes, createEntriesRoutes, createHealthRoutes, createFilesRoutes, createPasswordResetRoutes, createChatRoutes } from './routes'
 import { startRateLimitCleanup } from './middleware'
+import { websocket } from './routes/chat'
 
 // ===================
 // Environment Validation
@@ -91,8 +92,9 @@ startRateLimitCleanup()
 
 /**
  * Uploads-Verzeichnis erstellen falls nicht vorhanden.
+ * Gespeichert im /data/uploads Verzeichnis außerhalb des backend-Ordners.
  */
-const UPLOADS_DIR = join(process.cwd(), 'uploads')
+const UPLOADS_DIR = join(import.meta.dir, '..', 'data', 'uploads')
 await mkdir(UPLOADS_DIR, { recursive: true })
 
 // ===================
@@ -112,6 +114,7 @@ app.route('/api', createAuthRoutes(JWT_SECRET))
 app.route('/api', createPasswordResetRoutes())
 app.route('/api/entries', createEntriesRoutes(JWT_SECRET))
 app.route('/api/files', createFilesRoutes(JWT_SECRET, UPLOADS_DIR))
+app.route('/api/chat', createChatRoutes())
 
 // ===================
 // Static Files & PWA
@@ -179,4 +182,5 @@ export default {
   port: 3000,
   hostname: '0.0.0.0',
   fetch: app.fetch,
+  websocket,
 }

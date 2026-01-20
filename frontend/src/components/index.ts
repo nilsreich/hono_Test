@@ -27,5 +27,8 @@ export * from './entries'
 // File Components - Datei-Uploads
 export * from './files'
 
+// Chat Components - Echtzeit-Kommunikation
+export * from './chat'
+
 // Layout Components - Seitenstruktur
 export * from './layout'

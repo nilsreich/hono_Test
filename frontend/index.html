@@ -1,11 +1,30 @@
 <!doctype html>
-<html lang="en">
+<html lang="de">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Ultra-schnelle Fullstack-App mit Bun, Hono, React und SQLite. PWA-fähig mit Offline-Support." />
+    <meta name="theme-color" content="#3b82f6" />
+    
+    <!-- Preconnect für bessere Performance -->
+    <link rel="preconnect" href="/" />
+    
+    <!-- PWA Icons -->
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    
     <title>Hono SQLite App</title>
   </head>
   <body>
+    <!-- Noscript Fallback für SEO & Accessibility -->
+    <noscript>
+      <div style="padding: 20px; text-align: center; font-family: system-ui, sans-serif;">
+        <h1>JavaScript erforderlich</h1>
+        <p>Diese App benötigt JavaScript. Bitte aktiviere JavaScript in deinem Browser.</p>
+      </div>
+    </noscript>
+    
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

@@ -1,239 +1,183 @@
 /**
  * @file hooks/useFiles.ts
- * @description Custom Hook für Datei-Verwaltung.
+ * @description Custom Hook für Datei-Verwaltung mit TanStack Query v5.
  * 
  * FEATURES:
- * - Automatisches Laden der Dateien bei Token-Änderung
- * - Upload mit Fortschritts-Feedback
- * - Download mit automatischem Browser-Download
- * - Löschen mit automatischer UI-Aktualisierung
- * - Automatischer Logout bei 401 (Token abgelaufen)
+ * - Automatisches Caching & Background-Updates
+ * - Optimistic Updates für sofortiges UI-Feedback
+ * - Offline-First: Mutationen werden bei fehlender Verbindung pausiert
+ * - Auto-Sync: Pausierte Mutationen werden automatisch synchronisiert
  * 
- * PATTERN: State + Actions in einem Hook
- * - Alle file-bezogenen States an einem Ort
- * - Alle file-bezogenen Aktionen exportiert
- * - Komponenten brauchen nur diesen einen Hook
+ * HINWEIS: File-Uploads sind nicht offline-fähig (Binärdaten),
+ * aber Löschen und Metadaten-Operationen funktionieren offline.
  */
 
-import { useState, useEffect, useCallback } from 'react'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useCallback } from 'react'
 import { filesApi } from '../lib/api'
+import { queryKeys } from '../lib/queryClient'
 import type { FileMetadata } from '../types'
 
 /**
- * Hook für Datei-Verwaltung.
+ * Hook für Datei-Verwaltung mit TanStack Query.
  * 
  * @param token - JWT-Token für API-Authentifizierung (null wenn nicht eingeloggt)
  * @param onUnauthorized - Callback bei 401-Fehler (z.B. logout)
- * 
- * USAGE:
- * ```tsx
- * const { files, loading, error, uploadFile, downloadFile, deleteFile } = useFiles(token, logout)
- * ```
  */
 export function useFiles(token: string | null, onUnauthorized?: () => void) {
-  // ===================
-  // State
-  // ===================
-  const [files, setFiles] = useState<FileMetadata[]>([])
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const queryClient = useQueryClient()
 
   // ===================
-  // Fetch Files
+  // Query: Dateien laden
   // ===================
-  /**
-   * Lädt alle Dateien des aktuellen Users.
-   * Wird automatisch bei Token-Änderung aufgerufen.
-   */
-  const fetchFiles = useCallback(async () => {
-    if (!token) {
-      setFiles([])
-      return
-    }
+  const {
+    data: files = [],
+    isLoading: loading,
+    error: queryError,
+    refetch,
+  } = useQuery({
+    queryKey: queryKeys.files.list(),
+    queryFn: async () => {
+      if (!token) return []
+      
+      const { data, error, status } = await filesApi.getAll(token)
+      
+      if (status === 401 && onUnauthorized) {
+        onUnauthorized()
+        throw new Error('Unauthorized')
+      }
+      
+      if (error) throw new Error(error)
+      return data || []
+    },
+    enabled: !!token,
+  })
 
-    setLoading(true)
-    setError(null)
+  // ===================
+  // Mutation: Datei hochladen
+  // ===================
+  const uploadMutation = useMutation({
+    mutationFn: async ({ file, description }: { file: File; description?: string }) => {
+      if (!token) throw new Error('Nicht authentifiziert')
+      
+      const { data, error, status } = await filesApi.upload(token, file, description)
+      
+      if (status === 401 && onUnauthorized) {
+        onUnauthorized()
+        throw new Error('Unauthorized')
+      }
+      
+      if (error) throw new Error(error)
+      return data
+    },
+    // Nach Upload: Cache invalidieren
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.files.list() })
+    },
+  })
 
-    const { data, error: apiError, status } = await filesApi.getAll(token)
+  // ===================
+  // Mutation: Datei löschen (Optimistic Update)
+  // ===================
+  const deleteMutation = useMutation({
+    mutationFn: async (fileId: number) => {
+      if (!token) throw new Error('Nicht authentifiziert')
+      
+      const { error, status } = await filesApi.delete(token, fileId)
+      
+      if (status === 401 && onUnauthorized) {
+        onUnauthorized()
+        throw new Error('Unauthorized')
+      }
+      
+      if (error) throw new Error(error)
+      return fileId
+    },
+    // Optimistic Update: Sofort aus Liste entfernen
+    onMutate: async (fileId) => {
+      await queryClient.cancelQueries({ queryKey: queryKeys.files.list() })
+      
+      const previousFiles = queryClient.getQueryData<FileMetadata[]>(queryKeys.files.list())
+      
+      // Optimistisch löschen
+      queryClient.setQueryData<FileMetadata[]>(queryKeys.files.list(), (old) =>
+        old?.filter((file) => file.id !== fileId) || []
+      )
+      
+      return { previousFiles }
+    },
+    onError: (_err, _fileId, context) => {
+      if (context?.previousFiles) {
+        queryClient.setQueryData(queryKeys.files.list(), context.previousFiles)
+      }
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.files.list() })
+    },
+  })
 
-    setLoading(false)
+  // ===================
+  // Download (kein Mutation, da kein State-Change)
+  // ===================
+  const downloadFile = useCallback(async (fileId: number): Promise<void> => {
+    if (!token) return
 
-    // Bei 401: Automatischer Logout (Token abgelaufen)
+    const { data, error, status } = await filesApi.download(token, fileId)
+
     if (status === 401 && onUnauthorized) {
       onUnauthorized()
       return
     }
 
-    if (apiError) {
-      setError(apiError)
-    } else if (data) {
-      setFiles(data)
-    }
-  }, [token, onUnauthorized])
-
-  // Automatisches Laden bei Token-Änderung
-  useEffect(() => {
-    // Prevent unnecessary calls and use an async IIFE pattern
-    // to avoid the React 19 cascading render warning
-    let isMounted = true
-    
-    const loadFiles = async () => {
-      if (!token) {
-        setFiles([])
-        return
-      }
-
-      setLoading(true)
-      setError(null)
-
-      const { data, error: apiError, status } = await filesApi.getAll(token)
-
-      // Only update state if component is still mounted
-      if (!isMounted) return
-
-      setLoading(false)
-
-      if (status === 401 && onUnauthorized) {
-        onUnauthorized()
-        return
-      }
-
-      if (apiError) {
-        setError(apiError)
-      } else if (data) {
-        setFiles(data)
-      }
+    if (error) {
+      console.error('Download error:', error)
+      return
     }
 
-    loadFiles()
-
-    return () => {
-      isMounted = false
+    if (data) {
+      // Browser-Download triggern
+      const url = URL.createObjectURL(data.blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = data.filename
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
     }
   }, [token, onUnauthorized])
 
   // ===================
-  // Upload File
+  // Wrapper-Funktionen
   // ===================
-  /**
-   * Lädt eine neue Datei hoch.
-   * 
-   * @param file - Die hochzuladende Datei
-   * @param description - Optionale Beschreibung
-   * @returns true bei Erfolg, false bei Fehler
-   */
-  const uploadFile = useCallback(
-    async (file: File, description?: string): Promise<boolean> => {
-      if (!token) return false
-
-      setLoading(true)
-      setError(null)
-
-      const { error: apiError, status } = await filesApi.upload(token, file, description)
-
-      // Bei 401: Automatischer Logout
-      if (status === 401 && onUnauthorized) {
-        onUnauthorized()
-        return false
-      }
-
-      if (apiError) {
-        setError(apiError)
-        setLoading(false)
-        return false
-      }
-
-      // Bei Erfolg: Dateien neu laden
-      await fetchFiles()
-      setLoading(false)
+  const uploadFile = useCallback(async (file: File, description?: string): Promise<boolean> => {
+    try {
+      await uploadMutation.mutateAsync({ file, description })
       return true
-    },
-    [token, onUnauthorized, fetchFiles]
-  )
+    } catch {
+      return false
+    }
+  }, [uploadMutation])
 
-  // ===================
-  // Download File
-  // ===================
-  /**
-   * Lädt eine Datei herunter und triggert Browser-Download.
-   * 
-   * @param fileId - ID der Datei
-   */
-  const downloadFile = useCallback(
-    async (fileId: number): Promise<void> => {
-      if (!token) return
-
-      setError(null)
-
-      const { data, error: apiError, status } = await filesApi.download(token, fileId)
-
-      // Bei 401: Automatischer Logout
-      if (status === 401 && onUnauthorized) {
-        onUnauthorized()
-        return
-      }
-
-      if (apiError) {
-        setError(apiError)
-        return
-      }
-
-      if (data) {
-        // Browser-Download triggern
-        const url = URL.createObjectURL(data.blob)
-        const a = document.createElement('a')
-        a.href = url
-        a.download = data.filename
-        document.body.appendChild(a)
-        a.click()
-        document.body.removeChild(a)
-        URL.revokeObjectURL(url)
-      }
-    },
-    [token, onUnauthorized]
-  )
-
-  // ===================
-  // Delete File
-  // ===================
-  /**
-   * Löscht eine Datei.
-   * 
-   * @param fileId - ID der zu löschenden Datei
-   * @returns true bei Erfolg, false bei Fehler
-   */
-  const deleteFile = useCallback(
-    async (fileId: number): Promise<boolean> => {
-      if (!token) return false
-
-      setLoading(true)
-      setError(null)
-
-      const { error: apiError, status } = await filesApi.delete(token, fileId)
-
-      // Bei 401: Automatischer Logout
-      if (status === 401 && onUnauthorized) {
-        onUnauthorized()
-        return false
-      }
-
-      if (apiError) {
-        setError(apiError)
-        setLoading(false)
-        return false
-      }
-
-      // Bei Erfolg: Lokal aus State entfernen (schneller als neu laden)
-      setFiles((prev) => prev.filter((f) => f.id !== fileId))
-      setLoading(false)
+  const deleteFile = useCallback(async (fileId: number): Promise<boolean> => {
+    try {
+      await deleteMutation.mutateAsync(fileId)
       return true
-    },
-    [token, onUnauthorized]
-  )
+    } catch {
+      return false
+    }
+  }, [deleteMutation])
 
-  // ===================
-  // Return
-  // ===================
+  const refreshFiles = useCallback(async () => {
+    await refetch()
+  }, [refetch])
+
+  // Kombinierter Error-State
+  const error = queryError?.message 
+    || uploadMutation.error?.message 
+    || deleteMutation.error?.message 
+    || null
+
   return {
     files,
     loading,
@@ -241,6 +185,6 @@ export function useFiles(token: string | null, onUnauthorized?: () => void) {
     uploadFile,
     downloadFile,
     deleteFile,
-    refreshFiles: fetchFiles,
+    refreshFiles,
   }
 }

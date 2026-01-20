@@ -24,6 +24,7 @@ import { tokenStorage } from '../lib/storage'
  */
 interface UseAuthReturn {
   token: string                                                    // Aktuelles JWT-Token
+  username: string                                                 // Aktueller Benutzername
   isAuthenticated: boolean                                         // Schneller Check ob eingeloggt
   loading: boolean                                                 // Ladezustand für UI-Feedback
   error: string                                                    // Fehlermeldung für Anzeige
@@ -44,6 +45,7 @@ export function useAuth(): UseAuthReturn {
   // Token initial aus LocalStorage laden (Lazy Initialization)
   // WARUM LAZY? Verhindert unnötigen LocalStorage-Zugriff bei jedem Render
   const [token, setToken] = useState(() => tokenStorage.get() || '')
+  const [username, setUsername] = useState(() => localStorage.getItem('username') || '')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
@@ -53,11 +55,11 @@ export function useAuth(): UseAuthReturn {
    * 
    * @returns true bei Erfolg, false bei Fehler
    */
-  const login = useCallback(async (username: string, password: string): Promise<boolean> => {
+  const login = useCallback(async (u: string, password: string): Promise<boolean> => {
     setLoading(true)
     setError('')
 
-    const { data, error: apiError, status } = await authApi.login(username, password)
+    const { data, error: apiError, status } = await authApi.login(u, password)
 
     setLoading(false)
 
@@ -72,7 +74,9 @@ export function useAuth(): UseAuthReturn {
       // Storage: Für Persistenz über Page-Reloads
       // State: Für reaktive UI-Updates
       tokenStorage.set(data.token)
+      localStorage.setItem('username', u)
       setToken(data.token)
+      setUsername(u)
       return true
     }
 
@@ -153,7 +157,9 @@ export function useAuth(): UseAuthReturn {
    */
   const logout = useCallback(() => {
     tokenStorage.remove()
+    localStorage.removeItem('username')
     setToken('')
+    setUsername('')
   }, [])
 
   /**
@@ -166,6 +172,7 @@ export function useAuth(): UseAuthReturn {
 
   return {
     token,
+    username,
     isAuthenticated: !!token,  // Konvertiert zu Boolean
     loading,
     error,

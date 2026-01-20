@@ -1,194 +1,248 @@
 /**
  * @file hooks/useEntries.ts
- * @description Custom Hook für Einträge-Verwaltung (CRUD-Operationen).
+ * @description Custom Hook für Einträge-Verwaltung mit TanStack Query v5.
  * 
- * WARUM EIN EIGENER HOOK FÜR ENTRIES?
- * - Separation of Concerns: Einträge-Logik getrennt von Auth-Logik
- * - Lokaler State: Jede Komponente kann eigene Instanz haben
- * - Side Effects: useEffect für automatisches Laden
- * - Callback-Pattern: onUnauthorized für Auth-Integration
+ * FEATURES:
+ * - Automatisches Caching & Background-Updates
+ * - Optimistic Updates für sofortiges UI-Feedback
+ * - Offline-First: Mutationen werden bei fehlender Verbindung pausiert
+ * - Auto-Sync: Pausierte Mutationen werden automatisch synchronisiert
+ * 
+ * PATTERN: TanStack Query + Optimistic Updates
+ * - useQuery: Für Daten-Fetching mit Caching
+ * - useMutation: Für Schreiboperationen mit Optimistic Updates
+ * - queryClient.setQueryData: Für direktes Cache-Update
  */
 
-import { useState, useEffect, useCallback } from 'react'
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useCallback } from 'react'
 import { entriesApi } from '../lib/api'
+import { queryKeys } from '../lib/queryClient'
 import type { Entry } from '../types'
 
 /**
  * Return-Type des useEntries Hooks.
  */
 interface UseEntriesReturn {
-  entries: Entry[]                            // Liste aller Einträge
-  loading: boolean                            // Ladezustand
-  error: string                               // Fehlermeldung
-  fetchEntries: () => Promise<void>           // Manuelles Neuladen
-  addEntry: (text: string) => Promise<boolean> // Neuen Eintrag hinzufügen
-  updateEntry: (id: number, text: string) => Promise<boolean> // Eintrag aktualisieren
-  deleteEntry: (id: number) => Promise<boolean> // Eintrag löschen
-  clearError: () => void                      // Fehler zurücksetzen
+  entries: Entry[]
+  loading: boolean
+  error: string
+  isPending: boolean
+  fetchEntries: () => Promise<void>
+  addEntry: (text: string) => Promise<boolean>
+  updateEntry: (id: number, text: string) => Promise<boolean>
+  deleteEntry: (id: number) => Promise<boolean>
+  clearError: () => void
 }
 
 /**
- * Hook für Einträge-Verwaltung.
+ * Hook für Einträge-Verwaltung mit TanStack Query.
  * 
  * @param token - JWT-Token für API-Authentifizierung
  * @param onUnauthorized - Callback bei 401-Fehler (z.B. Logout auslösen)
- * 
- * WARUM onUnauthorized ALS CALLBACK?
- * - Lose Kopplung: Hook weiß nicht, wie Auth funktioniert
- * - Flexibilität: Aufrufer entscheidet über Reaktion auf 401
- * - Typisch: logout() Funktion übergeben → automatisches Ausloggen bei Token-Ablauf
  */
 export function useEntries(token: string, onUnauthorized?: () => void): UseEntriesReturn {
-  const [entries, setEntries] = useState<Entry[]>([])
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
+  const queryClient = useQueryClient()
 
-  /**
-   * Einträge vom Server laden.
-   * useCallback mit [token, onUnauthorized] als Dependencies.
-   */
+  // ===================
+  // Query: Einträge laden
+  // ===================
+  const {
+    data: entries = [],
+    isLoading,
+    error: queryError,
+    refetch,
+  } = useQuery({
+    queryKey: queryKeys.entries.list(),
+    queryFn: async () => {
+      if (!token) return []
+      
+      const { data, error, status } = await entriesApi.getAll(token)
+      
+      if (status === 401) {
+        onUnauthorized?.()
+        throw new Error('Unauthorized')
+      }
+      
+      if (error) throw new Error(error)
+      return data || []
+    },
+    enabled: !!token,
+  })
+
+  // ===================
+  // Mutation: Eintrag hinzufügen (Optimistic Update)
+  // ===================
+  const addMutation = useMutation({
+    mutationFn: async (text: string) => {
+      const { data, error } = await entriesApi.create(token, text)
+      if (error) throw new Error(error)
+      return { text, data }
+    },
+    // Optimistic Update: UI sofort aktualisieren
+    onMutate: async (text) => {
+      // Laufende Queries abbrechen
+      await queryClient.cancelQueries({ queryKey: queryKeys.entries.list() })
+      
+      // Vorherigen Zustand speichern (für Rollback)
+      const previousEntries = queryClient.getQueryData<Entry[]>(queryKeys.entries.list())
+      
+      // Optimistisch neuen Eintrag hinzufügen
+      const optimisticEntry: Entry = {
+        id: -Date.now(), // Temporäre negative ID
+        text,
+      }
+      
+      queryClient.setQueryData<Entry[]>(queryKeys.entries.list(), (old) => [
+        optimisticEntry,
+        ...(old || []),
+      ])
+      
+      return { previousEntries }
+    },
+    // Bei Fehler: Rollback zum vorherigen Zustand
+    onError: (_err, _text, context) => {
+      if (context?.previousEntries) {
+        queryClient.setQueryData(queryKeys.entries.list(), context.previousEntries)
+      }
+    },
+    // Nach Erfolg oder Fehler: Cache invalidieren für frische Daten
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.entries.list() })
+    },
+  })
+
+  // ===================
+  // Mutation: Eintrag aktualisieren (Optimistic Update)
+  // ===================
+  const updateMutation = useMutation({
+    mutationFn: async ({ id, text }: { id: number; text: string }) => {
+      const { error, status } = await entriesApi.update(token, id, text)
+      
+      if (status === 401) {
+        onUnauthorized?.()
+        throw new Error('Unauthorized')
+      }
+      
+      if (error) throw new Error(error)
+      return { id, text }
+    },
+    // Optimistic Update
+    onMutate: async ({ id, text }) => {
+      await queryClient.cancelQueries({ queryKey: queryKeys.entries.list() })
+      
+      const previousEntries = queryClient.getQueryData<Entry[]>(queryKeys.entries.list())
+      
+      // Optimistisch aktualisieren
+      queryClient.setQueryData<Entry[]>(queryKeys.entries.list(), (old) =>
+        old?.map((entry) => (entry.id === id ? { ...entry, text } : entry)) || []
+      )
+      
+      return { previousEntries }
+    },
+    onError: (_err, _variables, context) => {
+      if (context?.previousEntries) {
+        queryClient.setQueryData(queryKeys.entries.list(), context.previousEntries)
+      }
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.entries.list() })
+    },
+  })
+
+  // ===================
+  // Mutation: Eintrag löschen (Optimistic Update)
+  // ===================
+  const deleteMutation = useMutation({
+    mutationFn: async (id: number) => {
+      const { error, status } = await entriesApi.delete(token, id)
+      
+      if (status === 401) {
+        onUnauthorized?.()
+        throw new Error('Unauthorized')
+      }
+      
+      if (error) throw new Error(error)
+      return id
+    },
+    // Optimistic Update: Sofort aus Liste entfernen
+    onMutate: async (id) => {
+      await queryClient.cancelQueries({ queryKey: queryKeys.entries.list() })
+      
+      const previousEntries = queryClient.getQueryData<Entry[]>(queryKeys.entries.list())
+      
+      // Optimistisch löschen
+      queryClient.setQueryData<Entry[]>(queryKeys.entries.list(), (old) =>
+        old?.filter((entry) => entry.id !== id) || []
+      )
+      
+      return { previousEntries }
+    },
+    onError: (_err, _id, context) => {
+      if (context?.previousEntries) {
+        queryClient.setQueryData(queryKeys.entries.list(), context.previousEntries)
+      }
+    },
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: queryKeys.entries.list() })
+    },
+  })
+
+  // ===================
+  // Wrapper-Funktionen
+  // ===================
   const fetchEntries = useCallback(async () => {
-    // Ohne Token keine Anfrage senden
-    if (!token) return
+    await refetch()
+  }, [refetch])
 
-    setError('')
-    setLoading(true)
-
-    const { data, error: apiError, status } = await entriesApi.getAll(token)
-
-    setLoading(false)
-
-    // 401 = Token ungültig/abgelaufen → Callback aufrufen
-    if (status === 401) {
-      onUnauthorized?.()  // Optional Chaining: Nur aufrufen wenn definiert
-      return
-    }
-
-    if (apiError) {
-      setError('Fehler beim Laden der Einträge')
-      return
-    }
-
-    // Einträge setzen (oder leeres Array als Fallback)
-    setEntries(data || [])
-  }, [token, onUnauthorized])
-
-  /**
-   * Neuen Eintrag hinzufügen.
-   * 
-   * @param text - Inhalt des neuen Eintrags
-   * @returns true bei Erfolg, false bei Fehler
-   */
   const addEntry = useCallback(async (text: string): Promise<boolean> => {
-    // Leere Einträge nicht zulassen (Frontend-Validierung)
     if (!text.trim()) return false
-
-    setLoading(true)
-    setError('')
-
-    const { error: apiError } = await entriesApi.create(token, text)
-
-    setLoading(false)
-
-    if (apiError) {
-      setError(apiError)
+    try {
+      await addMutation.mutateAsync(text)
+      return true
+    } catch {
       return false
     }
+  }, [addMutation])
 
-    // Nach erfolgreichem Hinzufügen: Liste neu laden
-    // WARUM NICHT LOKAL HINZUFÜGEN?
-    // - Server generiert ID und Timestamp
-    // - Garantiert Konsistenz mit Datenbank
-    // - Einfacher als optimistic Updates
-    await fetchEntries()
-    return true
-  }, [token, fetchEntries])
-
-  /**
-   * Eintrag aktualisieren.
-   * 
-   * @param id - ID des Eintrags
-   * @param text - Neuer Inhalt
-   * @returns true bei Erfolg, false bei Fehler
-   */
   const updateEntry = useCallback(async (id: number, text: string): Promise<boolean> => {
     if (!text.trim()) return false
-
-    setLoading(true)
-    setError('')
-
-    const { error: apiError, status } = await entriesApi.update(token, id, text)
-
-    setLoading(false)
-
-    if (status === 401) {
-      onUnauthorized?.()
+    try {
+      await updateMutation.mutateAsync({ id, text })
+      return true
+    } catch {
       return false
     }
+  }, [updateMutation])
 
-    if (apiError) {
-      setError(apiError)
-      return false
-    }
-
-    await fetchEntries()
-    return true
-  }, [token, fetchEntries, onUnauthorized])
-
-  /**
-   * Eintrag löschen.
-   * 
-   * @param id - ID des zu löschenden Eintrags
-   * @returns true bei Erfolg, false bei Fehler
-   */
   const deleteEntry = useCallback(async (id: number): Promise<boolean> => {
-    setLoading(true)
-    setError('')
-
-    const { error: apiError, status } = await entriesApi.delete(token, id)
-
-    setLoading(false)
-
-    if (status === 401) {
-      onUnauthorized?.()
+    try {
+      await deleteMutation.mutateAsync(id)
+      return true
+    } catch {
       return false
     }
+  }, [deleteMutation])
 
-    if (apiError) {
-      setError(apiError)
-      return false
-    }
-
-    // Optimistic Update: Eintrag sofort aus lokaler Liste entfernen
-    setEntries((prev) => prev.filter((e) => e.id !== id))
-    return true
-  }, [token, onUnauthorized])
-
-  /**
-   * Fehler manuell zurücksetzen.
-   */
   const clearError = useCallback(() => {
-    setError('')
+    // Errors werden automatisch von TanStack Query verwaltet
   }, [])
 
-  /**
-   * Automatisches Laden beim Mount und bei Token-Änderung.
-   * 
-   * WARUM useEffect?
-   * - Side Effect: API-Call ist ein Side Effect
-   * - Automatisch: User muss nicht manuell laden
-   * - Reaktiv: Bei Token-Änderung (Login/Logout) wird neu geladen
-   */
-  useEffect(() => {
-    if (token) {
-      fetchEntries()
-    }
-  }, [token, fetchEntries])
+  // Kombinierter Error-State
+  const error = queryError?.message 
+    || addMutation.error?.message 
+    || updateMutation.error?.message 
+    || deleteMutation.error?.message 
+    || ''
+
+  // Kombinierter Pending-State
+  const isPending = addMutation.isPending || updateMutation.isPending || deleteMutation.isPending
 
   return {
     entries,
-    loading,
+    loading: isLoading,
     error,
+    isPending,
     fetchEntries,
     addEntry,
     updateEntry,

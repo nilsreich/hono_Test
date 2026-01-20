@@ -11,13 +11,21 @@ Ein extrem ressourceneffizientes Web-App-Template, optimiert für den Betrieb au
 - **Auth:** `hono/jwt` Middleware & `Bun.password` für sicheres Argon2/bcrypt Hashing.
 - **Validation:** [Zod](https://zod.dev/) + `@hono/zod-validator` - Typsichere Eingabe-Validierung.
 - **Security:** `secureHeaders()` Middleware für XSS, HSTS, Clickjacking-Schutz.
+- **WebSocket:** Native Bun WebSockets für Echtzeit-Chat.
 
 ### Frontend
 - **Framework:** [React 19](https://react.dev/) (SPA) - Als statische Dateien serviert.
-- **Build-Tool:** [Vite](https://vitejs.dev/) - Schnelle Development-Experience und optimierte Builds.
+- **Build-Tool:** [Vite 6](https://vitejs.dev/) - Schnelle Development-Experience und optimierte Builds.
+- **State Management:** [TanStack Query v5](https://tanstack.com/query) - Server-State mit Caching, Offline-Support & Optimistic Updates.
 - **PWA:** [vite-plugin-pwa](https://vite-pwa-org.netlify.app/) - Offline-Support und Installierbarkeit.
 - **CSS:** [Tailwind CSS v4](https://tailwindcss.com/) - Modernstes CSS-Framework via `@tailwindcss/vite`.
 - **Linting:** ESLint + Prettier - Konsistente Code-Formatierung.
+
+### Offline-First Features
+- **Query Cache Persistenz:** TanStack Query Cache wird im localStorage gespeichert.
+- **Optimistic Updates:** UI wird sofort aktualisiert, Rollback bei Fehler.
+- **Offline-Sync:** Mutationen werden bei fehlender Verbindung pausiert und automatisch synchronisiert.
+- **Service Worker:** PWA-Support mit Workbox für Asset-Caching.
 
 ---
 
@@ -35,9 +43,11 @@ Ein extrem ressourceneffizientes Web-App-Template, optimiert für den Betrieb au
 │   ├── routes/
 │   │   ├── index.ts       # Route-Exports
 │   │   ├── auth.ts        # Authentifizierungs-Routen (Login, Signup) mit Zod-Validierung
+│   │   ├── chat.ts        # WebSocket-Chat-Route mit Pub/Sub
 │   │   ├── entries.ts     # Einträge-Routen (CRUD) mit Zod-Validierung
 │   │   ├── files.ts       # Datei-Upload-Routen (Upload, Download, Delete)
-│   │   └── health.ts      # Health-Check-Route
+│   │   ├── health.ts      # Health-Check-Route
+│   │   └── password-reset.ts # Passwort-Reset-Routen
 │   ├── types/
 │   │   └── index.ts       # TypeScript Type-Definitionen
 │   └── validation/
@@ -47,7 +57,7 @@ Ein extrem ressourceneffizientes Web-App-Template, optimiert für den Betrieb au
 ├── frontend/
 │   ├── src/
 │   │   ├── App.tsx        # Haupt-App-Komponente mit Tab-Navigation
-│   │   ├── main.tsx       # React-Einstiegspunkt
+│   │   ├── main.tsx       # React-Einstiegspunkt mit TanStack Query Provider
 │   │   ├── index.css      # Globale Styles (Tailwind)
 │   │   ├── components/
 │   │   │   ├── index.ts   # Komponenten-Barrel-Export
@@ -55,29 +65,41 @@ Ein extrem ressourceneffizientes Web-App-Template, optimiert für den Betrieb au
 │   │   │   │   ├── Alert.tsx
 │   │   │   │   ├── Button.tsx
 │   │   │   │   ├── Card.tsx
-│   │   │   │   └── Input.tsx
+│   │   │   │   ├── Input.tsx
+│   │   │   │   └── OfflineBanner.tsx  # Offline-Status Anzeige
 │   │   │   ├── auth/      # Authentifizierungs-Komponenten
-│   │   │   │   └── AuthForm.tsx
+│   │   │   │   ├── AuthForm.tsx
+│   │   │   │   ├── ForgotPasswordForm.tsx
+│   │   │   │   └── ResetPasswordForm.tsx
 │   │   │   ├── entries/   # Einträge-Komponenten
 │   │   │   │   ├── EntryForm.tsx
 │   │   │   │   └── EntryList.tsx
 │   │   │   ├── files/     # Datei-Upload-Komponenten
 │   │   │   │   ├── FileUpload.tsx
 │   │   │   │   └── FileList.tsx
-│   │   │   └── layout/    # Layout-Komponenten
+│   │   │   ├── chat/      # Chat-Komponenten
+│   │   │   │   └── Chat.tsx
+│   │   │   └── layout/    # Layout-Container
 │   │   │       └── PageLayout.tsx
-│   │   ├── hooks/         # Custom React Hooks
+│   │   ├── hooks/         # Custom React Hooks mit TanStack Query
 │   │   │   ├── index.ts
 │   │   │   ├── useAuth.ts
-│   │   │   ├── useEntries.ts
-│   │   │   └── useFiles.ts
+│   │   │   ├── useEntries.ts  # Mit Optimistic Updates
+│   │   │   ├── useFiles.ts    # Mit Optimistic Updates
+│   │   │   ├── useChat.ts     # WebSocket-Chat
+│   │   │   └── useOnlineStatus.ts  # Offline-Erkennung
 │   │   ├── lib/           # Hilfsfunktionen & API-Client
 │   │   │   ├── api.ts     # Zentralisierter API-Client
-│   │   │   └── storage.ts # LocalStorage-Wrapper
+│   │   │   ├── storage.ts # LocalStorage-Wrapper
+│   │   │   └── queryClient.ts # TanStack Query Konfiguration
 │   │   └── types/         # TypeScript Type-Definitionen
 │   │       └── index.ts
 │   ├── vite.config.ts
 │   └── eslint.config.js   # ESLint + Prettier Konfiguration
+│
+├── data/
+│   ├── sqlite/            # SQLite-Datenbank
+│   └── uploads/           # Datei-Uploads (nach User-ID)
 │
 ├── .prettierrc            # Prettier Konfiguration
 └── dist/                  # Build-Output (vom Backend serviert)
@@ -99,10 +121,36 @@ Das Frontend folgt einer klaren Schichtenarchitektur:
 
 | Schicht | Zweck | Beispiele |
 |---------|-------|-----------|
-| **Components** | UI-Darstellung | `Button`, `Card`, `AuthForm` |
-| **Hooks** | Business-Logik & State | `useAuth`, `useEntries` |
-| **Lib** | Infrastruktur | `api.ts`, `storage.ts` |
-| **Types** | TypeScript-Definitionen | `Entry`, `User` |
+| **Components** | UI-Darstellung | `Button`, `Card`, `AuthForm`, `OfflineBanner` |
+| **Hooks** | Business-Logik & State (TanStack Query) | `useAuth`, `useEntries`, `useOnlineStatus` |
+| **Lib** | Infrastruktur | `api.ts`, `storage.ts`, `queryClient.ts` |
+| **Types** | TypeScript-Definitionen | `Entry`, `User`, `FileMetadata` |
+
+### 🔄 TanStack Query Integration
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    PersistQueryClientProvider               │
+│  ┌───────────────────────────────────────────────────────┐  │
+│  │                    QueryClient                        │  │
+│  │  ┌─────────────────┐  ┌─────────────────────────────┐ │  │
+│  │  │  Query Cache    │  │  Mutation Cache             │ │  │
+│  │  │  (entries,files)│  │  (add,update,delete)        │ │  │
+│  │  └────────┬────────┘  └─────────────┬───────────────┘ │  │
+│  │           │                         │                 │  │
+│  │           └─────────┬───────────────┘                 │  │
+│  │                     ▼                                 │  │
+│  │          ┌──────────────────────┐                     │  │
+│  │          │  SyncStoragePersister│                     │  │
+│  │          │  (localStorage)      │                     │  │
+│  │          └──────────────────────┘                     │  │
+│  └───────────────────────────────────────────────────────┘  │
+└─────────────────────────────────────────────────────────────┘
+
+networkMode: 'offlineFirst'
+├── Online:  Request → Server → Cache → UI
+└── Offline: Cache → UI, Mutation paused → Sync when online
+```
 
 ### 🛠 Backend-Architektur
 
@@ -116,10 +164,15 @@ Das Backend ist modular aufgebaut:
 | **validation/** | Eingabe-Validierung |
 | **types/** | Gemeinsame TypeScript-Definitionen |
 
-### 📱 PWA Features
-- **Offline-Caching**: Assets werden über Workbox gecacht.
-- **Smart Updates**: Service Worker (`sw.js`) wird vom Backend mit `Cache-Control: no-cache` serviert, um sofortige Updates zu ermöglichen.
-- **SPA Fallback**: Das Backend leitet alle Navigationsanfragen (Deep Links) auf die `index.html` um, damit clientseitiges Routing offline funktioniert.
+### 📱 PWA & Offline Features
+
+- **TanStack Query Persistenz:** Query- und Mutation-Cache werden im localStorage gespeichert.
+- **Optimistic Updates:** UI wird sofort aktualisiert, automatischer Rollback bei Fehlern.
+- **Offline-First Modus:** Mutationen werden bei fehlender Verbindung pausiert.
+- **Auto-Sync:** Pausierte Mutationen werden automatisch synchronisiert wenn online.
+- **Offline-Banner:** Informiert User über Offline-Status und pausierte Änderungen.
+- **Asset-Caching:** Workbox cachet statische Assets für schnellen Offline-Zugriff.
+- **Smart Updates:** Service Worker wird mit `Cache-Control: no-cache` serviert.
 
 **Vorteile dieser Architektur:**
 - **Zero-Downtime DB:** SQLite ist eine Datei, kein extra Dienst, der abstürzen kann.
@@ -580,7 +633,7 @@ graph TB
         Val["✅ Validation<br/>(Zod Schemas)"]
         Repo["📚 Repositories"]
         DB[("💾 SQLite")]
-        FS[("📁 Filesystem<br/>/uploads")]
+        FS[("📁 Filesystem<br/>/data/uploads")]
     end
     
     subgraph "📧 External Services"
@@ -657,7 +710,7 @@ sequenceDiagram
     end
     
     Server->>Server: crypto.randomUUID()
-    Server->>FS: mkdir uploads/{userId}
+    Server->>FS: mkdir /data/uploads/{userId}
     Server->>FS: Bun.write({uuid}.ext)
     Server->>DB: INSERT INTO files (metadata)
     DB-->>Server: ✓ FileMetadata
