@@ -11,6 +11,7 @@
  * - ui/: Wiederverwendbare Basis-Komponenten (Button, Input, Card, Alert)
  * - auth/: Authentifizierungs-spezifische Komponenten
  * - entries/: Einträge-spezifische Komponenten
+ * - files/: Datei-Upload-spezifische Komponenten
  * - layout/: Layout-Container und Strukturkomponenten
  */
 
@@ -22,6 +23,9 @@ export * from './auth'
 
 // Entry Components - Einträge-Verwaltung
 export * from './entries'
+
+// File Components - Datei-Uploads
+export * from './files'
 
 // Layout Components - Seitenstruktur
 export * from './layout'

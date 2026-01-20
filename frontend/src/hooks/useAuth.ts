@@ -28,9 +28,12 @@ interface UseAuthReturn {
   loading: boolean                                                 // Ladezustand für UI-Feedback
   error: string                                                    // Fehlermeldung für Anzeige
   login: (username: string, password: string) => Promise<boolean>  // Login-Funktion
-  signup: (username: string, password: string) => Promise<boolean> // Signup-Funktion
+  signup: (username: string, password: string, email?: string) => Promise<boolean> // Signup-Funktion
   logout: () => void                                               // Logout-Funktion
   clearError: () => void                                           // Fehler zurücksetzen
+  forgotPassword: (email: string) => Promise<{ success: boolean; message?: string; error?: string }> // Passwort-Reset anfordern
+  resetPassword: (token: string, password: string) => Promise<{ success: boolean; message?: string; error?: string }> // Passwort zurücksetzen
+  validateResetToken: (token: string) => Promise<{ valid: boolean; error?: string }> // Reset-Token validieren
 }
 
 /**
@@ -84,11 +87,11 @@ export function useAuth(): UseAuthReturn {
    * - Explizite User-Aktion für Sicherheit
    * - Möglichkeit für E-Mail-Verifizierung später
    */
-  const signup = useCallback(async (username: string, password: string): Promise<boolean> => {
+  const signup = useCallback(async (username: string, password: string, email?: string): Promise<boolean> => {
     setLoading(true)
     setError('')
 
-    const { error: apiError } = await authApi.signup(username, password)
+    const { error: apiError } = await authApi.signup(username, password, email)
 
     setLoading(false)
 
@@ -100,6 +103,48 @@ export function useAuth(): UseAuthReturn {
     // Erfolg als "Fehler" anzeigen (wird grün dargestellt durch Variant-Check)
     setError('Registrierung erfolgreich! Bitte einloggen.')
     return true
+  }, [])
+
+  /**
+   * Passwort-Reset anfordern.
+   * Sendet E-Mail mit Reset-Link.
+   */
+  const forgotPassword = useCallback(async (email: string) => {
+    const { data, error: apiError } = await authApi.forgotPassword(email)
+
+    if (apiError) {
+      return { success: false, error: apiError }
+    }
+
+    return { success: data?.success ?? false, message: data?.message }
+  }, [])
+
+  /**
+   * Passwort zurücksetzen.
+   * Setzt neues Passwort mit gültigem Token.
+   */
+  const resetPassword = useCallback(async (token: string, password: string) => {
+    const { data, error: apiError } = await authApi.resetPassword(token, password)
+
+    if (apiError) {
+      return { success: false, error: apiError }
+    }
+
+    return { success: data?.success ?? false, message: data?.message }
+  }, [])
+
+  /**
+   * Reset-Token validieren.
+   * Prüft ob Token gültig und nicht abgelaufen ist.
+   */
+  const validateResetToken = useCallback(async (token: string) => {
+    const { data, error: apiError } = await authApi.validateResetToken(token)
+
+    if (apiError) {
+      return { valid: false, error: apiError }
+    }
+
+    return { valid: data?.valid ?? false, error: data?.error }
   }, [])
 
   /**
@@ -128,5 +173,8 @@ export function useAuth(): UseAuthReturn {
     signup,
     logout,
     clearError,
+    forgotPassword,
+    resetPassword,
+    validateResetToken,
   }
 }

@@ -31,6 +31,20 @@ export interface User {
   username: string
 }
 
+/**
+ * Repräsentiert eine hochgeladene Datei.
+ */
+export interface FileMetadata {
+  id: number           // Eindeutige ID aus der Datenbank
+  originalName: string // Originaler Dateiname
+  storedName: string   // Gespeicherter Dateiname (UUID + Extension)
+  mimeType: string     // MIME-Type der Datei
+  size: number         // Dateigröße in Bytes
+  description?: string // Optionale Beschreibung
+  userId: number       // Benutzer-ID
+  createdAt: string    // Zeitstempel der Erstellung
+}
+
 // ===================
 // API Response Types
 // ===================
@@ -55,6 +69,23 @@ export interface EntryResponse {
   error?: string
 }
 
+/**
+ * Response-Typ für File-Upload.
+ */
+export interface FileUploadResponse {
+  success?: boolean
+  file?: FileMetadata
+  error?: string
+}
+
+/**
+ * Response-Typ für File-Operationen (Delete).
+ */
+export interface FileResponse {
+  success?: boolean
+  error?: string
+}
+
 // ===================
 // Form State Types
 // ===================
@@ -73,5 +104,13 @@ export interface AuthFormData {
  */
 export interface EntryFormData {
   text: string
+}
+
+/**
+ * Formulardaten für Datei-Upload.
+ */
+export interface FileUploadFormData {
+  file: File
+  description?: string
 }
 

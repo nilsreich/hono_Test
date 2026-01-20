@@ -9,12 +9,15 @@ Ein extrem ressourceneffizientes Web-App-Template, optimiert für den Betrieb au
 - **Framework:** [Hono](https://hono.dev/) - Ultrafast, web-standardsbasiertes Framework.
 - **Database:** `bun:sqlite` - Native SQLite-Anbindung ohne schwere ORMs oder externe Prozesse.
 - **Auth:** `hono/jwt` Middleware & `Bun.password` für sicheres Argon2/bcrypt Hashing.
+- **Validation:** [Zod](https://zod.dev/) + `@hono/zod-validator` - Typsichere Eingabe-Validierung.
+- **Security:** `secureHeaders()` Middleware für XSS, HSTS, Clickjacking-Schutz.
 
 ### Frontend
 - **Framework:** [React 19](https://react.dev/) (SPA) - Als statische Dateien serviert.
 - **Build-Tool:** [Vite](https://vitejs.dev/) - Schnelle Development-Experience und optimierte Builds.
 - **PWA:** [vite-plugin-pwa](https://vite-pwa-org.netlify.app/) - Offline-Support und Installierbarkeit.
-- **CSS:** [Tailwind CSS v4](https://tailwindcss.com/) - Modernstes CSS-Framework ohne Runtime-Overhead.
+- **CSS:** [Tailwind CSS v4](https://tailwindcss.com/) - Modernstes CSS-Framework via `@tailwindcss/vite`.
+- **Linting:** ESLint + Prettier - Konsistente Code-Formatierung.
 
 ---
 
@@ -23,7 +26,7 @@ Ein extrem ressourceneffizientes Web-App-Template, optimiert für den Betrieb au
 ```
 /
 ├── backend/
-│   ├── index.ts           # Haupteinstiegspunkt (App-Setup, Static Serving)
+│   ├── index.ts           # Haupteinstiegspunkt (App-Setup, Static Serving, Security Headers)
 │   ├── db/
 │   │   └── index.ts       # Datenbankverbindung & Repositories
 │   ├── middleware/
@@ -31,17 +34,19 @@ Ein extrem ressourceneffizientes Web-App-Template, optimiert für den Betrieb au
 │   │   └── rateLimit.ts   # Rate-Limiting Middleware
 │   ├── routes/
 │   │   ├── index.ts       # Route-Exports
-│   │   ├── auth.ts        # Authentifizierungs-Routen (Login, Signup)
-│   │   ├── entries.ts     # Einträge-Routen (CRUD)
+│   │   ├── auth.ts        # Authentifizierungs-Routen (Login, Signup) mit Zod-Validierung
+│   │   ├── entries.ts     # Einträge-Routen (CRUD) mit Zod-Validierung
+│   │   ├── files.ts       # Datei-Upload-Routen (Upload, Download, Delete)
 │   │   └── health.ts      # Health-Check-Route
 │   ├── types/
 │   │   └── index.ts       # TypeScript Type-Definitionen
 │   └── validation/
-│       └── index.ts       # Eingabe-Validierungsfunktionen
+│       ├── index.ts       # Eingabe-Validierungsfunktionen
+│       └── schemas.ts     # Zod-Schemas für API-Validierung
 │
 ├── frontend/
 │   ├── src/
-│   │   ├── App.tsx        # Haupt-App-Komponente
+│   │   ├── App.tsx        # Haupt-App-Komponente mit Tab-Navigation
 │   │   ├── main.tsx       # React-Einstiegspunkt
 │   │   ├── index.css      # Globale Styles (Tailwind)
 │   │   ├── components/
@@ -56,19 +61,25 @@ Ein extrem ressourceneffizientes Web-App-Template, optimiert für den Betrieb au
 │   │   │   ├── entries/   # Einträge-Komponenten
 │   │   │   │   ├── EntryForm.tsx
 │   │   │   │   └── EntryList.tsx
+│   │   │   ├── files/     # Datei-Upload-Komponenten
+│   │   │   │   ├── FileUpload.tsx
+│   │   │   │   └── FileList.tsx
 │   │   │   └── layout/    # Layout-Komponenten
 │   │   │       └── PageLayout.tsx
 │   │   ├── hooks/         # Custom React Hooks
 │   │   │   ├── index.ts
 │   │   │   ├── useAuth.ts
-│   │   │   └── useEntries.ts
+│   │   │   ├── useEntries.ts
+│   │   │   └── useFiles.ts
 │   │   ├── lib/           # Hilfsfunktionen & API-Client
 │   │   │   ├── api.ts     # Zentralisierter API-Client
 │   │   │   └── storage.ts # LocalStorage-Wrapper
 │   │   └── types/         # TypeScript Type-Definitionen
 │   │       └── index.ts
-│   └── vite.config.ts
+│   ├── vite.config.ts
+│   └── eslint.config.js   # ESLint + Prettier Konfiguration
 │
+├── .prettierrc            # Prettier Konfiguration
 └── dist/                  # Build-Output (vom Backend serviert)
 ```
 
@@ -118,88 +129,229 @@ Das Backend ist modular aufgebaut:
 
 ---
 
-## 🛠️ Lokale Entwicklung
+## 🛠️ Development
 
 ### Voraussetzungen
-Stelle sicher, dass [Bun](https://bun.sh/) auf deinem System installiert ist.
+- [Bun](https://bun.sh/) (v1.0+)
 
 ### Setup
-1. Repository klonen.
-2. Abhängigkeiten installieren:
-   ```bash
-   # Im Root-Verzeichnis
-   cd frontend && bun install
-   cd ../backend && bun install
-   ```
-3. Umgebungsvariablen setzen:
-   ```bash
-   export JWT_SECRET="dein-sicheres-secret"
-   ```
-
-### Dev-Server starten
-Nutze das zentrale Skript im Root-Verzeichnis:
 ```bash
 # Im Root-Verzeichnis
+cd frontend && bun install
+cd ../backend && bun install
+cd ..
+bun install  # Root-Dependencies (Prettier)
+```
+
+### Umgebungsvariablen
+```bash
+export JWT_SECRET="dein-sicheres-secret"
+```
+
+### Dev-Server starten
+```bash
 bun run dev
 ```
 - **Frontend:** `http://localhost:5173` (Vite mit Proxy zu API)
 - **Backend:** `http://localhost:3000` (Hono API)
 
+### Verfügbare Scripts
+| Script | Beschreibung |
+|--------|--------------|
+| `bun run dev` | Frontend + Backend gleichzeitig starten |
+| `bun run dev:frontend` | Nur Vite Dev-Server |
+| `bun run dev:backend` | Nur Backend mit Watch-Mode |
+| `bun run build:frontend` | Frontend für Produktion bauen |
+| `bun run lint` | ESLint ausführen |
+| `bun run format` | Code mit Prettier formatieren |
+| `bun run format:check` | Prüfen ob Code formatiert ist |
+
 ---
 
-## 🚢 Deployment (VPS)
+## 📦 Deployment (VPS)
 
 Dieses Projekt ist darauf ausgelegt, mit minimalem Aufwand auf einem Linux-Server zu laufen.
 
 ### 1. Build erstellen
-Lokal ausführen:
 ```bash
-cd frontend
-bun run build
+bun run build:frontend
 ```
-Dies erstellt den `/dist` Ordner im Root-Verzeichnis.
 
 ### 2. Dateien übertragen
-Du musst **nur** folgende Ordner/Dateien auf deinen VPS kopieren (z.B. via SCP oder Git):
-- `/backend` (enthält die Logic)
-- `/dist` (enthält das fertige Frontend)
-- `package.json` (im Root, falls du zentrale Scripte nutzt)
+Nur diese Ordner/Dateien auf den VPS kopieren:
+- `/backend`
+- `/dist`
 
-### 3. Server starten
-Auf dem VPS im `backend`-Ordner:
+### 3. Umgebungsvariablen konfigurieren
+
+Erstelle eine `.env` Datei im `backend/` Ordner:
+
+```bash
+# Pflicht: JWT Secret für Token-Signierung
+JWT_SECRET=dein-sicheres-secret-hier
+
+# Für Passwort-Reset Funktion (optional aber empfohlen)
+RESEND_API_KEY=re_xxxxxxxxxxxx
+EMAIL_FROM=noreply@deine-domain.de
+APP_URL=https://deine-domain.de
+```
+
+### 4. Server starten
 ```bash
 cd backend
-export JWT_SECRET="dein-sicheres-secret"
 bun install --production
 bun run index.ts
 ```
-*Empfehlung: Nutze `pm2` oder ein `systemd` Service-File, um den Prozess im Hintergrund am Laufen zu halten.*
+*Empfehlung: Nutze `pm2` oder `systemd` für Prozess-Management.*
 
 ---
 
-## 📊 Vor- und Nachteile
+## 📧 E-Mail Setup (Resend)
 
-### Vorteile
-1. **Performance:** Bun startet in Millisekunden. SQLite-Abfragen sind durch In-Memory-Caching von Bun extrem schnell.
-2. **Kosten:** Läuft stabil auf dem kleinsten $2-4 VPS von Hetzner, DigitalOcean oder Netcup.
-3. **Einfachheit:** Kein Docker-Zwang, kein komplexes Setup von Datenbank-Clustern notwendig.
-4. **Wartbarkeit:** Modulare Struktur ermöglicht einfaches Erweitern und Testen.
+Die Passwort-vergessen-Funktion verwendet [Resend](https://resend.com) für den E-Mail-Versand. Resend ist ein moderner E-Mail-Dienst mit großzügigem Free-Tier (3.000 E-Mails/Monat).
 
-### Nachteile
-1. **Vertikale Skalierung:** SQLite ist für sehr hohen Schreibzugriff (Tausende pro Sekunde) weniger geeignet als Postgres (wobei WAL-Mode hier viel hilft).
-2. **Persistence:** Da die DB eine Datei ist, müssen Backups (Snapshots der `.sqlite`-Datei) selbst verwaltet werden.
+### Warum Resend?
+
+| Vorteil | Beschreibung |
+|---------|--------------|
+| **Kein SMTP-Server** | Keine eigene Mail-Infrastruktur nötig |
+| **Minimaler RAM** | Nur eine HTTP-Anfrage, Resend übernimmt Queueing |
+| **Hohe Zustellrate** | Professionelle Infrastruktur, weniger Spam-Probleme |
+| **Einfache API** | Native `fetch()` von Bun, kein nodemailer |
+
+### 1. Resend Account erstellen
+
+1. Gehe zu [resend.com/signup](https://resend.com/signup)
+2. Erstelle einen Account (kostenlos)
+3. Im Dashboard: **API Keys** → **Create API Key**
+4. Kopiere den Key (beginnt mit `re_`)
+
+### 2. Domain verifizieren (WICHTIG!)
+
+Ohne Domain-Verifizierung landen E-Mails im Spam oder werden abgelehnt.
+
+1. Im Resend Dashboard: **Domains** → **Add Domain**
+2. Gib deine Domain ein (z.B. `deine-domain.de`)
+3. Füge die angezeigten DNS-Einträge bei deinem Domain-Provider hinzu:
+
+| Typ | Name | Wert |
+|-----|------|------|
+| **TXT** | `resend._domainkey` | `p=MIGf...` (Resend zeigt den vollständigen Wert) |
+| **TXT** | `@` oder `_dmarc` | `v=DMARC1; p=none;` |
+| **CNAME** | `send` | `send.resend.com` |
+
+**Beispiel für Cloudflare/Hetzner DNS:**
+```
+# SPF Record (falls nicht vorhanden)
+TXT  @                    "v=spf1 include:_spf.resend.com ~all"
+
+# DKIM Record
+TXT  resend._domainkey    "p=MIGf..."
+
+# DMARC Record
+TXT  _dmarc               "v=DMARC1; p=none;"
+```
+
+4. Warte auf Verifizierung (kann bis zu 24h dauern, meist schneller)
+5. Status sollte auf "Verified" wechseln ✅
+
+### 3. Umgebungsvariablen setzen
+
+```bash
+# backend/.env
+RESEND_API_KEY=re_123456789abcdef
+EMAIL_FROM=noreply@deine-domain.de
+APP_URL=https://deine-domain.de
+```
+
+**Wichtig:**
+- `EMAIL_FROM` muss eine Adresse deiner verifizierten Domain sein
+- `APP_URL` wird für den Reset-Link in der E-Mail verwendet
+- Ohne `APP_URL` wird `http://localhost:5173` als Fallback genutzt
+
+### 4. Testen
+
+```bash
+# Backend starten
+cd backend
+export RESEND_API_KEY=re_xxx
+export EMAIL_FROM=noreply@deine-domain.de
+export APP_URL=http://localhost:5173
+bun run index.ts
+
+# Test-Request (in neuem Terminal)
+curl -X POST http://localhost:3000/api/forgot-password \
+  -H "Content-Type: application/json" \
+  -d '{"email":"deine@email.de"}'
+```
+
+### Troubleshooting
+
+| Problem | Lösung |
+|---------|--------|
+| E-Mail kommt nicht an | DNS-Einträge prüfen, Spam-Ordner checken |
+| `RESEND_API_KEY not configured` | `.env` Datei erstellen oder `export` verwenden |
+| `Invalid API Key` | Key im Resend Dashboard neu generieren |
+| E-Mail im Spam | Domain vollständig verifizieren (SPF, DKIM, DMARC) |
 
 ---
 
-## 🔒 Sicherheit
-- Die App nutzt **JWT (JSON Web Tokens)** zur Authentifizierung.
-- Passwörter werden niemals im Klartext gespeichert, sondern mit dem nativen **Bun Password Hashing** (stark gesalzen) verarbeitet.
-- API-Routen unter `/api/entries/*` sind durch eine Middleware geschützt.
-- **Rate Limiting** schützt vor Brute-Force-Angriffen auf Login/Signup.
+## 🔧 Code-Qualität
+
+### ESLint
+Das Projekt verwendet ESLint mit:
+- TypeScript-Support (`typescript-eslint`)
+- React Hooks Rules (`eslint-plugin-react-hooks`)
+- React Refresh (`eslint-plugin-react-refresh`)
+- Prettier-Kompatibilität (`eslint-config-prettier`)
+
+### Prettier
+Konfiguriert in `.prettierrc`:
+- Keine Semikolons
+- Single Quotes
+- 2 Spaces Einrückung
+- 100 Zeichen Zeilenlänge
+
+**Empfehlung:** Beide Tools sollten in der CI/CD Pipeline verwendet werden:
+```bash
+bun run lint && bun run format:check
+```
 
 ---
 
-## � Programmabläufe (Flow Diagrams)
+## 📊 Programmabläufe (Flow Diagrams)
+
+### Authentifizierung
+- **JWT (JSON Web Tokens)** mit HS256-Algorithmus und 24h Ablaufzeit.
+- Passwörter werden mit **Bun.password** (Argon2/bcrypt) sicher gehasht.
+- Rate Limiting schützt Login (10/min) und Signup (5/min) vor Brute-Force.
+
+### Eingabe-Validierung
+- **Zod-Schemas** validieren alle API-Eingaben mit `@hono/zod-validator`.
+- Strikte Typ-Validierung für Username, Passwort, Entry-Text und Datei-Uploads.
+
+### SQL-Injection-Schutz ✅
+- **Alle** Datenbankabfragen verwenden **Prepared Statements** mit `?`-Platzhaltern.
+- Werte werden nie direkt in SQL-Strings konkateniert.
+- Beispiel: `db.query('SELECT * FROM users WHERE username = ?').get(username)`
+
+### Security Headers
+Die `secureHeaders()` Middleware aktiviert:
+- `X-XSS-Protection: 1; mode=block`
+- `X-Content-Type-Options: nosniff`
+- `X-Frame-Options: SAMEORIGIN` (Clickjacking-Schutz)
+- `Strict-Transport-Security` (HSTS)
+- `Referrer-Policy: strict-origin-when-cross-origin`
+
+### Datei-Uploads
+- Erlaubte MIME-Types: Bilder (JPG, PNG, GIF, WebP), PDF, TXT, CSV.
+- Maximale Dateigröße: 5 MB.
+- Dateien werden mit UUID umbenannt (verhindert Path-Traversal).
+- User können nur eigene Dateien sehen/löschen.
+
+---
+
+## 🛠️ Development
 
 Die folgenden Diagramme zeigen die wichtigsten Abläufe in der Anwendung.
 
@@ -417,17 +569,22 @@ sequenceDiagram
 graph TB
     subgraph "🖥️ Frontend - React SPA"
         UI["📦 Components<br/>(Button, Card, AuthForm...)"]
-        Hooks["🪝 Custom Hooks<br/>(useAuth, useEntries)"]
+        Hooks["🪝 Custom Hooks<br/>(useAuth, useEntries, useFiles)"]
         APIClient["📡 api.ts<br/>(Fetch Wrapper)"]
         Storage["💾 storage.ts<br/>(LocalStorage)"]
     end
     
     subgraph "🖧 Backend - Hono + Bun"
-        Routes["🛤️ Routes<br/>(auth, entries, health)"]
-        MW["🛡️ Middleware<br/>(JWT, RateLimit)"]
-        Val["✅ Validation"]
+        Routes["🛤️ Routes<br/>(auth, entries, files, health)"]
+        MW["🛡️ Middleware<br/>(JWT, RateLimit, SecureHeaders)"]
+        Val["✅ Validation<br/>(Zod Schemas)"]
         Repo["📚 Repositories"]
         DB[("💾 SQLite")]
+        FS[("📁 Filesystem<br/>/uploads")]
+    end
+    
+    subgraph "📧 External Services"
+        Resend["📨 Resend API<br/>(E-Mail Versand)"]
     end
     
     UI --> Hooks
@@ -437,7 +594,9 @@ graph TB
     Routes --> MW
     Routes --> Val
     Routes --> Repo
+    Routes -->|"Password Reset"| Resend
     Repo --> DB
+    Routes -->|"File Storage"| FS
     
     style UI fill:#61dafb,color:#000
     style Hooks fill:#61dafb,color:#000
@@ -448,6 +607,148 @@ graph TB
     style Val fill:#ff6b6b,color:#000
     style Repo fill:#ff6b6b,color:#000
     style DB fill:#ffd93d,color:#000
+    style FS fill:#ffd93d,color:#000
+    style Resend fill:#9333ea,color:#fff
+```
+
+### 📁 Datei-Upload
+
+```mermaid
+sequenceDiagram
+    participant User as 👤 User
+    participant UI as 🖥️ FileUpload
+    participant Hook as 🪝 useFiles
+    participant API as 📡 api.ts
+    participant Server as 🖧 Backend
+    participant FS as 📁 Filesystem
+    participant DB as 💾 SQLite
+
+    User->>UI: Wählt Datei aus / Drag & Drop
+    UI->>UI: Validiert Dateityp & Größe
+    
+    alt Validierung fehlgeschlagen
+        UI-->>User: ❌ Zeigt Fehler (Typ/Größe)
+    end
+    
+    UI->>Hook: uploadFile(file, description?)
+    Hook->>Hook: setLoading(true)
+    Hook->>API: filesApi.upload(token, file)
+    
+    Note over API: multipart/form-data
+    
+    API->>Server: POST /api/files
+    Server->>Server: JWT validieren
+    
+    alt Token ungültig
+        Server-->>API: 401 Unauthorized
+        API-->>Hook: { status: 401 }
+        Hook->>Hook: onUnauthorized()
+        Hook-->>UI: Redirect zu Login
+    end
+    
+    Server->>Server: MIME-Type prüfen
+    Server->>Server: Dateigröße prüfen (max 5MB)
+    
+    alt Validierung fehlgeschlagen
+        Server-->>API: 400 { error }
+        API-->>Hook: { error }
+        Hook-->>UI: setError()
+        UI-->>User: ❌ Zeigt Fehler
+    end
+    
+    Server->>Server: crypto.randomUUID()
+    Server->>FS: mkdir uploads/{userId}
+    Server->>FS: Bun.write({uuid}.ext)
+    Server->>DB: INSERT INTO files (metadata)
+    DB-->>Server: ✓ FileMetadata
+    Server-->>API: 200 { success, file }
+    API-->>Hook: { data }
+    Hook->>Hook: fetchFiles() → Refresh
+    Hook-->>UI: ✓ Success
+    UI-->>User: ✅ Datei in Liste sichtbar
+```
+
+### 🔐 Passwort vergessen & zurücksetzen
+
+```mermaid
+sequenceDiagram
+    participant User as 👤 User
+    participant UI as 🖥️ ForgotPasswordForm
+    participant API as 📡 api.ts
+    participant Server as 🖧 Backend
+    participant DB as 💾 SQLite
+    participant Resend as 📨 Resend API
+    participant Email as 📧 E-Mail Client
+
+    Note over User,Email: Phase 1: Passwort-Reset anfordern
+
+    User->>UI: Gibt E-Mail ein
+    UI->>API: authApi.forgotPassword(email)
+    API->>Server: POST /api/forgot-password
+    
+    Note over Server: Rate Limit Check (3/min)
+    
+    Server->>Server: Zod-Validierung
+    Server->>DB: SELECT * FROM users WHERE email = ?
+    
+    alt E-Mail nicht gefunden
+        DB-->>Server: null
+        Server-->>API: 200 { success, message }
+        Note over Server: Keine Info preisgeben!
+        API-->>UI: "Falls Konto existiert..."
+        UI-->>User: ✅ Generische Erfolgsmeldung
+    end
+    
+    DB-->>Server: User { id, username }
+    Server->>Server: crypto.randomUUID()
+    Server->>Server: expires = now + 1h
+    Server->>DB: UPDATE users SET reset_token, reset_expires
+    
+    Server->>Server: generateResetEmail(url, username)
+    Server->>Resend: POST /emails (HTML)
+    Resend-->>Server: 200 OK
+    
+    Server-->>API: 200 { success, message }
+    API-->>UI: "Falls Konto existiert..."
+    UI-->>User: ✅ Generische Erfolgsmeldung
+    
+    Note over Resend,Email: E-Mail Zustellung
+    Resend->>Email: Reset-Link E-Mail
+    
+    Note over User,Email: Phase 2: Passwort zurücksetzen
+
+    Email->>User: Öffnet E-Mail
+    User->>UI: Klickt Reset-Link
+    
+    Note over UI: ResetPasswordForm
+    
+    UI->>API: authApi.validateResetToken(token)
+    API->>Server: GET /api/reset-password/{token}
+    Server->>DB: SELECT * FROM users WHERE reset_token = ?
+    
+    alt Token ungültig/abgelaufen
+        Server-->>API: 400 { valid: false }
+        API-->>UI: { valid: false }
+        UI-->>User: ❌ "Link abgelaufen"
+    end
+    
+    Server-->>API: 200 { valid: true }
+    API-->>UI: Token gültig
+    UI-->>User: Zeigt Passwort-Formular
+    
+    User->>UI: Gibt neues Passwort ein
+    UI->>API: authApi.resetPassword(token, password)
+    API->>Server: POST /api/reset-password
+    
+    Server->>DB: SELECT * FROM users WHERE reset_token = ?
+    Server->>Server: Prüfe reset_expires
+    Server->>Server: Bun.password.hash(newPassword)
+    Server->>DB: UPDATE users SET password = ?
+    Server->>DB: UPDATE users SET reset_token = NULL
+    
+    Server-->>API: 200 { success, message }
+    API-->>UI: "Passwort zurückgesetzt!"
+    UI-->>User: ✅ Zum Login-Button
 ```
 
 ---

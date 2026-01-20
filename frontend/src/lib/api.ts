@@ -10,7 +10,7 @@
  * - Type Safety: Generische Typisierung für alle Responses
  */
 
-import type { Entry, AuthResponse, EntryResponse } from '../types'
+import type { Entry, AuthResponse, EntryResponse, FileMetadata, FileUploadResponse, FileResponse } from '../types'
 
 // ===================
 // API Configuration
@@ -110,11 +110,41 @@ export const authApi = {
    * Neuen Benutzer registrieren.
    * @returns success: true bei Erfolg
    */
-  signup: async (username: string, password: string) => {
+  signup: async (username: string, password: string, email?: string) => {
     return request<AuthResponse>('/signup', {
       method: 'POST',
-      body: { username, password },
+      body: { username, password, email },
     })
+  },
+
+  /**
+   * Passwort-Reset anfordern.
+   * @returns Immer success: true (verhindert User Enumeration)
+   */
+  forgotPassword: async (email: string) => {
+    return request<{ success: boolean; message: string }>('/forgot-password', {
+      method: 'POST',
+      body: { email },
+    })
+  },
+
+  /**
+   * Passwort zurücksetzen.
+   * @returns success: true bei Erfolg
+   */
+  resetPassword: async (token: string, password: string) => {
+    return request<{ success: boolean; message: string }>('/reset-password', {
+      method: 'POST',
+      body: { token, password },
+    })
+  },
+
+  /**
+   * Reset-Token validieren.
+   * @returns { valid: true } oder { valid: false, error: string }
+   */
+  validateResetToken: async (token: string) => {
+    return request<{ valid: boolean; error?: string }>(`/reset-password/${token}`)
   },
 }
 
@@ -145,6 +175,135 @@ export const entriesApi = {
       method: 'POST',
       token,
       body: { text },
+    })
+  },
+
+  /**
+   * Eintrag aktualisieren.
+   * @param token - JWT-Token für Authentifizierung
+   * @param id - ID des Eintrags
+   * @param text - Neuer Inhalt des Eintrags
+   */
+  update: async (token: string, id: number, text: string) => {
+    return request<EntryResponse>(`/entries/${id}`, {
+      method: 'PUT',
+      token,
+      body: { text },
+    })
+  },
+
+  /**
+   * Eintrag löschen.
+   * @param token - JWT-Token für Authentifizierung
+   * @param id - ID des zu löschenden Eintrags
+   */
+  delete: async (token: string, id: number) => {
+    return request<EntryResponse>(`/entries/${id}`, {
+      method: 'DELETE',
+      token,
+    })
+  },
+}
+
+// ===================
+// Files API
+// ===================
+
+/**
+ * API-Funktionen für Datei-Uploads.
+ * Alle Funktionen erfordern ein gültiges JWT-Token.
+ */
+export const filesApi = {
+  /**
+   * Alle Dateien des aktuellen Benutzers abrufen.
+   * @param token - JWT-Token für Authentifizierung
+   */
+  getAll: async (token: string) => {
+    return request<FileMetadata[]>('/files', { token })
+  },
+
+  /**
+   * Neue Datei hochladen.
+   * @param token - JWT-Token für Authentifizierung
+   * @param file - Die hochzuladende Datei
+   * @param description - Optionale Beschreibung der Datei
+   */
+  upload: async (token: string, file: File, description?: string) => {
+    const formData = new FormData()
+    formData.append('file', file)
+    if (description) {
+      formData.append('description', description)
+    }
+
+    try {
+      const response = await fetch(`${API_BASE}/files`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          // Content-Type wird automatisch auf multipart/form-data gesetzt
+        },
+        body: formData,
+      })
+
+      const data = await response.json().catch(() => ({}))
+
+      if (!response.ok) {
+        return { error: data.error || 'Upload fehlgeschlagen', status: response.status }
+      }
+
+      return { data: data as FileUploadResponse, status: response.status }
+    } catch (error) {
+      console.error('File Upload Error:', error)
+      return { error: 'Netzwerkfehler', status: 0 }
+    }
+  },
+
+  /**
+   * Datei herunterladen.
+   * @param token - JWT-Token für Authentifizierung
+   * @param fileId - ID der Datei
+   */
+  download: async (token: string, fileId: number) => {
+    try {
+      const response = await fetch(`${API_BASE}/files/${fileId}/download`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      })
+
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}))
+        return { error: data.error || 'Download fehlgeschlagen', status: response.status }
+      }
+
+      // Blob zurückgeben für Download
+      const blob = await response.blob()
+      const contentDisposition = response.headers.get('Content-Disposition')
+      let filename = 'download'
+      
+      if (contentDisposition) {
+        const match = contentDisposition.match(/filename="(.+)"/)
+        if (match) {
+          filename = decodeURIComponent(match[1])
+        }
+      }
+
+      return { data: { blob, filename }, status: response.status }
+    } catch (error) {
+      console.error('File Download Error:', error)
+      return { error: 'Netzwerkfehler', status: 0 }
+    }
+  },
+
+  /**
+   * Datei löschen.
+   * @param token - JWT-Token für Authentifizierung
+   * @param fileId - ID der zu löschenden Datei
+   */
+  delete: async (token: string, fileId: number) => {
+    return request<FileResponse>(`/files/${fileId}`, {
+      method: 'DELETE',
+      token,
     })
   },
 }

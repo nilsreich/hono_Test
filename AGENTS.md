@@ -12,8 +12,11 @@ Dieses Dokument definiert die Regeln und Best Practices für KI-Coding-Agents, d
 ## 🛠 Technologie-Stack für Agents
 - **Runtime:** Bun (nutze `bun install`, `bun run dev`, `bun x`)
 - **Backend:** Hono (Middleware-basiert, modulare Routes)
-- **Frontend:** React 19 SPA (Vite + Tailwind v4 + PWA Support)
-- **DB:** SQLite via `bun:sqlite`
+- **Validation:** Zod v4 + `@hono/zod-validator` (NICHT manuelle Validierung)
+- **Security:** `secureHeaders()` Middleware (XSS, HSTS, nosniff, SAMEORIGIN)
+- **Frontend:** React 19 SPA (Vite + `@tailwindcss/vite` + PWA Support)
+- **DB:** SQLite via `bun:sqlite` (immer Prepared Statements!)
+- **Code Quality:** ESLint + Prettier (konfiguriert im Root)
 
 ---
 
@@ -22,25 +25,32 @@ Dieses Dokument definiert die Regeln und Best Practices für KI-Coding-Agents, d
 ### 📂 Backend-Struktur
 ```
 /backend
-├── index.ts              # Einstiegspunkt: App-Setup, Route-Mounting, Static Serving
+├── index.ts              # Einstiegspunkt: App-Setup, Route-Mounting, Static Serving, secureHeaders
 ├── db/
-│   └── index.ts          # DB-Initialisierung & Repository-Funktionen
+│   └── index.ts          # DB-Initialisierung & Repository-Funktionen (userRepository, entryRepository, fileRepository)
 ├── middleware/
+│   ├── index.ts          # Middleware-Exports
 │   └── rateLimit.ts      # Rate-Limiting Middleware
 ├── routes/
-│   ├── auth.ts           # /api/login, /api/signup
-│   ├── entries.ts        # /api/entries (JWT-geschützt)
-│   └── health.ts         # /api/health
+│   ├── auth.ts           # /api/login, /api/signup (mit Zod-Validierung)
+│   ├── entries.ts        # /api/entries (CRUD, JWT-geschützt, Zod-Validierung)
+│   ├── files.ts          # /api/files (File-Upload, JWT-geschützt)
+│   ├── health.ts         # /api/health
+│   ├── password-reset.ts # /api/forgot-password, /api/reset-password (Resend E-Mail)
+│   └── index.ts          # Route-Exports
 ├── types/
-│   └── index.ts          # Shared Types (User, Entry, JwtPayload)
+│   └── index.ts          # Shared Types (User, Entry, FileMetadata, JwtPayload)
+├── uploads/              # Datei-Uploads (nach User-ID organisiert)
 └── validation/
-    └── index.ts          # Validierungsfunktionen
+    ├── index.ts          # Validierungsfunktionen & Schema-Exports
+    └── schemas.ts        # Zod-Schemas (authSchema, entrySchema, fileMetadataSchema, forgotPasswordSchema, resetPasswordSchema)
 ```
 
 **Wichtige Prinzipien:**
 - **Routes:** Jede Route-Datei exportiert eine Factory-Funktion (`createXxxRoutes`), die einen `Hono`-Router zurückgibt.
-- **DB:** Repositories (`userRepository`, `entryRepository`) abstrahieren DB-Zugriff.
-- **Validation:** Zentralisierte Validierungslogik mit TypeScript-Typen.
+- **DB:** Repositories (`userRepository`, `entryRepository`, `fileRepository`) abstrahieren DB-Zugriff.
+- **Validation:** Zod-Schemas in `validation/schemas.ts`, verwendet via `@hono/zod-validator`.
+- **Security:** `secureHeaders()` Middleware im Root-App aktiviert.
 
 ### 📂 Frontend-Struktur
 ```
@@ -54,16 +64,23 @@ Dieses Dokument definiert die Regeln und Best Practices für KI-Coding-Agents, d
 │   │   ├── Card.tsx
 │   │   └── Input.tsx
 │   ├── auth/             # Auth-spezifische Komponenten
-│   │   └── AuthForm.tsx
+│   │   ├── AuthForm.tsx
+│   │   ├── ForgotPasswordForm.tsx
+│   │   └── ResetPasswordForm.tsx
 │   ├── entries/          # Entry-spezifische Komponenten
 │   │   ├── EntryForm.tsx
-│   │   └── EntryList.tsx
+│   │   └── EntryList.tsx  # Mit Edit/Delete Funktionalität
+│   ├── files/            # File-Upload Komponenten
+│   │   ├── FileList.tsx
+│   │   ├── FileUpload.tsx
+│   │   └── index.ts
 │   └── layout/           # Layout-Komponenten
 │       └── PageLayout.tsx
 ├── hooks/
 │   ├── index.ts          # Hook-Exports
-│   ├── useAuth.ts        # Authentifizierungs-State & Actions
-│   └── useEntries.ts     # Entries-State & CRUD-Operationen
+│   ├── useAuth.ts        # Authentifizierungs-State & Actions (inkl. Password Reset)
+│   ├── useEntries.ts     # Entries-State & CRUD-Operationen (Create, Read, Update, Delete)
+│   └── useFiles.ts       # Files-State & Upload-Operationen
 ├── lib/
 │   ├── api.ts            # Zentralisierter API-Client mit Fetch-Wrapper
 │   └── storage.ts        # LocalStorage-Abstraktion
@@ -81,7 +98,47 @@ Dieses Dokument definiert die Regeln und Best Practices für KI-Coding-Agents, d
 
 ## 📋 Coding-Konventionen für Agents
 
-### 🔧 Neue Komponente erstellen
+### � Zod-Validierung (WICHTIG!)
+Alle API-Endpunkte, die Benutzereingaben empfangen, MÜSSEN `@hono/zod-validator` verwenden.
+
+**Zod v4 Syntax beachten:**
+```typescript
+// backend/validation/schemas.ts
+import { z } from 'zod'
+
+// KORREKT für Zod v4 (message statt required_error)
+export const authSchema = z.object({
+  username: z.string({ message: 'Username is required' })
+    .min(3, { message: 'Username must be at least 3 characters' })
+    .max(50, { message: 'Username cannot exceed 50 characters' }),
+  password: z.string({ message: 'Password is required' })
+    .min(8, { message: 'Password must be at least 8 characters' })
+})
+
+// FALSCH (Zod v3 Syntax - NICHT verwenden!)
+// z.string({ required_error: '...' })
+```
+
+**Route-Integration:**
+```typescript
+import { zValidator } from '@hono/zod-validator'
+import { authSchema } from '../validation/schemas'
+
+auth.post('/signup',
+  zValidator('json', authSchema, (result, c) => {
+    if (!result.success) {
+      // Zod v4: .issues statt .errors
+      return c.json({ error: result.error.issues[0]?.message }, 400)
+    }
+  }),
+  async (c) => {
+    const { username, password } = c.req.valid('json')
+    // ...
+  }
+)
+```
+
+### �🔧 Neue Komponente erstellen
 1. Erstelle die Komponente im passenden Unterordner (`ui/`, `auth/`, etc.)
 2. Exportiere sie im jeweiligen `index.ts`
 3. Füge den Export in `components/index.ts` hinzu
@@ -132,6 +189,81 @@ export function useTasks(token: string) {
 }
 ```
 
+### 📁 File-Upload implementieren
+Das Projekt hat ein vollständiges File-Upload-System:
+
+**Backend-Route (`routes/files.ts`):**
+- `GET /api/files` - Liste aller Dateien des Users
+- `POST /api/files` - File-Upload (multipart/form-data)
+- `GET /api/files/:id/download` - Datei herunterladen
+- `DELETE /api/files/:id` - Datei löschen
+
+**Konfiguration:**
+```typescript
+// backend/validation/schemas.ts
+export const ALLOWED_MIME_TYPES = [
+  'image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml',
+  'application/pdf', 'text/plain', 'text/csv',
+  'application/json', 'application/xml'
+]
+export const MAX_FILE_SIZE = 10 * 1024 * 1024  // 10MB
+```
+
+**Speicherstruktur:**
+```
+/backend/uploads/
+└── {userId}/
+    └── {uuid}.{extension}
+```
+
+### 🔐 Passwort-Reset implementieren
+Das Projekt verwendet Resend für E-Mail-Versand:
+
+**Backend-Route (`routes/password-reset.ts`):**
+- `POST /api/forgot-password` - Sendet Reset-E-Mail (Rate Limited: 3/min)
+- `POST /api/reset-password` - Setzt Passwort zurück
+- `GET /api/reset-password/:token` - Validiert Token
+
+**Umgebungsvariablen für E-Mail:**
+```bash
+# backend/.env
+RESEND_API_KEY=re_xxxxxxxxxxxx
+EMAIL_FROM=noreply@deine-domain.de
+APP_URL=https://deine-domain.de
+```
+
+**Sicherheitsfeatures:**
+- UUID-basierte Tokens (kryptographisch sicher)
+- Token-Ablauf nach 1 Stunde
+- Tokens werden nach Verwendung gelöscht
+- Generische Fehlermeldungen (verhindert User Enumeration)
+- Native Bun `fetch()` für Resend API (kein nodemailer)
+
+**Datenbank-Schema:**
+```sql
+-- users-Tabelle erweitert um:
+reset_token TEXT,        -- UUID-Token für Reset
+reset_expires INTEGER    -- Ablaufdatum als Unix-Timestamp
+```
+
+**Konfiguration:**
+```typescript
+// backend/validation/schemas.ts
+export const ALLOWED_MIME_TYPES = [
+  'image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml',
+  'application/pdf', 'text/plain', 'text/csv',
+  'application/json', 'application/xml'
+]
+export const MAX_FILE_SIZE = 10 * 1024 * 1024  // 10MB
+```
+
+**Speicherstruktur:**
+```
+/backend/uploads/
+└── {userId}/
+    └── {uuid}.{extension}
+```
+
 ---
 
 ## 🔑 Authentifizierung (JWT)
@@ -176,10 +308,12 @@ Falls der Agent Fehler wie `EADDRINUSE` sieht:
 ## 🚀 Performance-Checkliste
 - [ ] Keine unnötigen `node_modules` im Backend.
 - [ ] Tailwind-Klassen statt inline Styles.
-- [ ] Keine schweren Validierungs-Bibliotheken.
+- [ ] Zod für Validierung (NICHT manuelle if-Checks).
 - [ ] SQLite-Statements als Prepared Statements (via `db.query()`).
 - [ ] API-Client zentral verwenden, nicht mehrfach `fetch` implementieren.
 - [ ] Hooks für State-Management, keine Logik in Komponenten.
+- [ ] `secureHeaders()` Middleware aktiv.
+- [ ] File-Uploads mit MIME-Type und Größen-Validierung.
 
 ---
 
@@ -189,3 +323,6 @@ Falls der Agent Fehler wie `EADDRINUSE` sieht:
 - **SPA Routing:** Das Backend muss ein Catch-all für die `index.html` haben.
 - **Circular Imports:** Barrel-Exports können zu Circular-Import-Problemen führen - Types separat halten.
 - **Component Props:** Immer explizite Interfaces definieren, keine `any` Types.
+- **Zod v4 API:** Nutze `message` statt `required_error` und `.issues` statt `.errors`.
+- **Tailwind v4:** Nutze `@tailwindcss/vite` Plugin, NICHT PostCSS-Konfiguration.
+- **React 19 useEffect:** Bei async-Operationen in useEffect `isMounted`-Pattern verwenden.

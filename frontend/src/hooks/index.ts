@@ -10,3 +10,4 @@
 
 export { useAuth } from './useAuth'
 export { useEntries } from './useEntries'
+export { useFiles } from './useFiles'

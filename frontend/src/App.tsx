@@ -3,17 +3,19 @@
  * @description Haupt-Komponente der Anwendung.
  * 
  * ARCHITEKTUR-ENTSCHEIDUNGEN:
- * - Hooks für State: useAuth und useEntries kapseln alle Business-Logik
+ * - Hooks für State: useAuth, useEntries und useFiles kapseln alle Business-Logik
  * - Komponenten für UI: Alle UI-Elemente sind wiederverwendbare Komponenten
  * - Conditional Rendering: Auth-Status bestimmt welche View angezeigt wird
+ * - URL-basiertes Routing: Passwort-Reset über URL-Parameter
  * 
  * WARUM SO WENIG CODE?
- * - Logik in Hooks ausgelagert (useAuth, useEntries)
- * - UI in Komponenten ausgelagert (AuthForm, EntryForm, etc.)
+ * - Logik in Hooks ausgelagert (useAuth, useEntries, useFiles)
+ * - UI in Komponenten ausgelagert (AuthForm, EntryForm, FileUpload, etc.)
  * - App.tsx ist nur noch "Orchestrierung" - verbindet Hooks mit Komponenten
  */
 
-import { useAuth, useEntries } from './hooks'
+import { useState, useEffect } from 'react'
+import { useAuth, useEntries, useFiles } from './hooks'
 import {
   PageLayout,
   Card,
@@ -21,22 +23,110 @@ import {
   Button,
   Alert,
   AuthForm,
+  ForgotPasswordForm,
+  ResetPasswordForm,
   EntryForm,
   EntryList,
+  FileUpload,
+  FileList,
 } from './components'
+
+/** Tabs für die Dashboard-Navigation */
+type TabType = 'entries' | 'files'
+
+/** Auth-Views */
+type AuthView = 'login' | 'forgot-password' | 'reset-password'
 
 function App() {
   // Auth-Hook: Verwaltet Login-Status, Token und Auth-Operationen
-  const { token, isAuthenticated, loading: authLoading, error: authError, login, signup, logout } = useAuth()
+  const {
+    token,
+    isAuthenticated,
+    loading: authLoading,
+    error: authError,
+    login,
+    signup,
+    logout,
+    forgotPassword,
+    resetPassword,
+    validateResetToken,
+  } = useAuth()
 
   // Entries-Hook: Verwaltet Einträge mit automatischem Logout bei 401
-  // WICHTIG: logout wird als onUnauthorized übergeben → automatischer Logout bei Token-Ablauf
   const {
     entries,
     loading: entriesLoading,
     error: entriesError,
     addEntry,
+    updateEntry,
+    deleteEntry,
   } = useEntries(token, logout)
+
+  // Files-Hook: Verwaltet Datei-Uploads mit automatischem Logout bei 401
+  const {
+    files,
+    loading: filesLoading,
+    error: filesError,
+    uploadFile,
+    downloadFile,
+    deleteFile,
+  } = useFiles(token, logout)
+
+  // Tab-State für Dashboard-Navigation
+  const [activeTab, setActiveTab] = useState<TabType>('entries')
+
+  // Auth-View State
+  const [authView, setAuthView] = useState<AuthView>('login')
+
+  // Reset-Token aus URL extrahieren
+  const [resetToken, setResetToken] = useState<string | null>(null)
+
+  // URL-Parameter beim Start auslesen
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const token = params.get('token')
+    const path = window.location.pathname
+
+    if (path === '/reset-password' && token) {
+      setResetToken(token)
+      setAuthView('reset-password')
+      // URL bereinigen (ohne Page Reload)
+      window.history.replaceState({}, '', '/')
+    }
+  }, [])
+
+  // ===================
+  // Passwort vergessen View
+  // ===================
+  if (!isAuthenticated && authView === 'forgot-password') {
+    return (
+      <PageLayout centered>
+        <ForgotPasswordForm
+          onSubmit={forgotPassword}
+          onBack={() => setAuthView('login')}
+        />
+      </PageLayout>
+    )
+  }
+
+  // ===================
+  // Passwort zurücksetzen View
+  // ===================
+  if (!isAuthenticated && authView === 'reset-password' && resetToken) {
+    return (
+      <PageLayout centered>
+        <ResetPasswordForm
+          token={resetToken}
+          onValidate={validateResetToken}
+          onSubmit={resetPassword}
+          onBack={() => {
+            setAuthView('login')
+            setResetToken(null)
+          }}
+        />
+      </PageLayout>
+    )
+  }
 
   // ===================
   // Nicht eingeloggt: Auth-Formular anzeigen
@@ -49,20 +139,21 @@ function App() {
           error={authError}
           onLogin={login}
           onSignup={signup}
+          onForgotPassword={() => setAuthView('forgot-password')}
         />
       </PageLayout>
     )
   }
 
   // ===================
-  // Eingeloggt: Dashboard mit Einträgen anzeigen
+  // Eingeloggt: Dashboard mit Tabs anzeigen
   // ===================
   return (
     <PageLayout>
       <Card className="max-w-md mx-auto">
         {/* Header mit Titel und Logout-Button */}
         <CardHeader
-          title="Meine Einträge"
+          title="Dashboard"
           action={
             <Button variant="ghost" onClick={logout} className="text-sm text-red-500">
               Logout
@@ -70,16 +161,69 @@ function App() {
           }
         />
 
-        {/* Formular für neue Einträge */}
-        <EntryForm loading={entriesLoading} onSubmit={addEntry} />
-
-        {/* Fehlermeldung falls vorhanden */}
-        {entriesError && <Alert message={entriesError} variant="error" />}
-
-        {/* Liste der Einträge */}
-        <div className="space-y-3">
-          <EntryList entries={entries} />
+        {/* Tab-Navigation */}
+        <div className="flex border-b border-gray-200 mb-4">
+          <button
+            onClick={() => setActiveTab('entries')}
+            className={`flex-1 py-2 text-center font-medium transition-colors ${
+              activeTab === 'entries'
+                ? 'text-blue-600 border-b-2 border-blue-600'
+                : 'text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            📝 Einträge
+          </button>
+          <button
+            onClick={() => setActiveTab('files')}
+            className={`flex-1 py-2 text-center font-medium transition-colors ${
+              activeTab === 'files'
+                ? 'text-blue-600 border-b-2 border-blue-600'
+                : 'text-gray-500 hover:text-gray-700'
+            }`}
+          >
+            📁 Dateien
+          </button>
         </div>
+
+        {/* Tab-Inhalt: Einträge */}
+        {activeTab === 'entries' && (
+          <>
+            {/* Formular für neue Einträge */}
+            <EntryForm loading={entriesLoading} onSubmit={addEntry} />
+
+            {/* Fehlermeldung falls vorhanden */}
+            {entriesError && <Alert message={entriesError} variant="error" />}
+
+            {/* Liste der Einträge mit Edit/Delete */}
+            <div className="space-y-3 mt-4">
+              <EntryList
+                entries={entries}
+                onUpdate={updateEntry}
+                onDelete={deleteEntry}
+              />
+            </div>
+          </>
+        )}
+
+        {/* Tab-Inhalt: Dateien */}
+        {activeTab === 'files' && (
+          <>
+            {/* Upload-Formular */}
+            <FileUpload loading={filesLoading} onUpload={uploadFile} />
+
+            {/* Fehlermeldung falls vorhanden */}
+            {filesError && <Alert message={filesError} variant="error" className="mt-4" />}
+
+            {/* Liste der Dateien */}
+            <div className="mt-4">
+              <FileList
+                files={files}
+                onDownload={downloadFile}
+                onDelete={deleteFile}
+              />
+            </div>
+          </>
+        )}
       </Card>
     </PageLayout>
   )

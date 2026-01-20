@@ -15,4 +15,6 @@
 
 export { createAuthRoutes } from './auth'
 export { createEntriesRoutes } from './entries'
+export { createFilesRoutes } from './files'
 export { createHealthRoutes } from './health'
+export { createPasswordResetRoutes } from './password-reset'

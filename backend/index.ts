@@ -18,12 +18,14 @@
 
 import { Hono } from 'hono'
 import { serveStatic } from 'hono/bun'
+import { secureHeaders } from 'hono/secure-headers'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { mkdir } from 'node:fs/promises'
 
 // Local Modules
 import { initializeDatabase } from './db'
-import { createAuthRoutes, createEntriesRoutes, createHealthRoutes } from './routes'
+import { createAuthRoutes, createEntriesRoutes, createHealthRoutes, createFilesRoutes, createPasswordResetRoutes } from './routes'
 import { startRateLimitCleanup } from './middleware'
 
 // ===================
@@ -47,6 +49,32 @@ if (!JWT_SECRET) {
 
 const app = new Hono()
 
+// ===================
+// Security Headers
+// ===================
+
+/**
+ * Secure Headers Middleware.
+ * Aktiviert gängige Sicherheits-Header wie:
+ * - X-XSS-Protection
+ * - X-Content-Type-Options: nosniff
+ * - X-Frame-Options: SAMEORIGIN
+ * - Strict-Transport-Security (HSTS)
+ * - Content-Security-Policy (CSP)
+ */
+app.use('*', secureHeaders({
+  // XSS-Schutz aktivieren
+  xXssProtection: '1; mode=block',
+  // Verhindert MIME-Type Sniffing
+  xContentTypeOptions: 'nosniff',
+  // Verhindert Einbettung in fremde iframes (Clickjacking-Schutz)
+  xFrameOptions: 'SAMEORIGIN',
+  // HSTS: Erzwingt HTTPS für 1 Jahr (in Produktion aktivieren)
+  strictTransportSecurity: 'max-age=31536000; includeSubDomains',
+  // Referrer nur bei same-origin senden
+  referrerPolicy: 'strict-origin-when-cross-origin',
+}))
+
 /**
  * Datenbank-Schema initialisieren.
  * Erstellt Tabellen falls nicht vorhanden.
@@ -61,6 +89,12 @@ initializeDatabase()
  */
 startRateLimitCleanup()
 
+/**
+ * Uploads-Verzeichnis erstellen falls nicht vorhanden.
+ */
+const UPLOADS_DIR = join(process.cwd(), 'uploads')
+await mkdir(UPLOADS_DIR, { recursive: true })
+
 // ===================
 // Mount API Routes
 // ===================
@@ -69,11 +103,15 @@ startRateLimitCleanup()
  * Route-Mounting Reihenfolge:
  * 1. Health: Öffentlich, für Monitoring
  * 2. Auth: Login/Signup, rate-limited
- * 3. Entries: JWT-geschützt, CRUD-Operationen
+ * 3. Password Reset: Passwort-Reset-Funktionalität
+ * 4. Entries: JWT-geschützt, CRUD-Operationen
+ * 5. Files: JWT-geschützt, Datei-Uploads
  */
 app.route('/api/health', createHealthRoutes())
 app.route('/api', createAuthRoutes(JWT_SECRET))
+app.route('/api', createPasswordResetRoutes())
 app.route('/api/entries', createEntriesRoutes(JWT_SECRET))
+app.route('/api/files', createFilesRoutes(JWT_SECRET, UPLOADS_DIR))
 
 // ===================
 // Static Files & PWA

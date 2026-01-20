@@ -116,3 +116,13 @@ export function validateEntryText(text: unknown): ValidationResult<EntryData> {
   // Erfolg: Getrimmten Text zurückgeben
   return { valid: true, text: text.trim() }
 }
+
+// ===================
+// Zod Schemas Export
+// ===================
+
+/**
+ * Re-export Zod-Schemas für die @hono/zod-validator Middleware.
+ * Verwendet für standardisierte API-Validierung.
+ */
+export * from './schemas'

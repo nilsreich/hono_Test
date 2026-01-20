@@ -14,6 +14,7 @@
 interface AlertProps {
   message: string                          // Anzuzeigender Text
   variant?: 'error' | 'success' | 'info'   // Visueller Stil (default: error)
+  className?: string                       // Zusätzliche CSS-Klassen
 }
 
 /**
@@ -36,13 +37,13 @@ const variantStyles = {
  * <Alert message="Speichern fehlgeschlagen" variant="error" />
  * <Alert message="Erfolgreich gespeichert!" variant="success" />
  */
-export function Alert({ message, variant = 'error' }: AlertProps) {
+export function Alert({ message, variant = 'error', className = '' }: AlertProps) {
   // Keine Anzeige bei leerer Nachricht
   // WARUM? Vermeidet leere Boxen im UI
   if (!message) return null
 
   return (
-    <p className={`mb-4 text-sm text-center font-medium p-2 rounded ${variantStyles[variant]}`}>
+    <p className={`mb-4 text-sm text-center font-medium p-2 rounded ${variantStyles[variant]} ${className}`}>
       {message}
     </p>
   )

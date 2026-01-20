@@ -22,6 +22,8 @@ interface UseEntriesReturn {
   error: string                               // Fehlermeldung
   fetchEntries: () => Promise<void>           // Manuelles Neuladen
   addEntry: (text: string) => Promise<boolean> // Neuen Eintrag hinzufügen
+  updateEntry: (id: number, text: string) => Promise<boolean> // Eintrag aktualisieren
+  deleteEntry: (id: number) => Promise<boolean> // Eintrag löschen
   clearError: () => void                      // Fehler zurücksetzen
 }
 
@@ -103,6 +105,66 @@ export function useEntries(token: string, onUnauthorized?: () => void): UseEntri
   }, [token, fetchEntries])
 
   /**
+   * Eintrag aktualisieren.
+   * 
+   * @param id - ID des Eintrags
+   * @param text - Neuer Inhalt
+   * @returns true bei Erfolg, false bei Fehler
+   */
+  const updateEntry = useCallback(async (id: number, text: string): Promise<boolean> => {
+    if (!text.trim()) return false
+
+    setLoading(true)
+    setError('')
+
+    const { error: apiError, status } = await entriesApi.update(token, id, text)
+
+    setLoading(false)
+
+    if (status === 401) {
+      onUnauthorized?.()
+      return false
+    }
+
+    if (apiError) {
+      setError(apiError)
+      return false
+    }
+
+    await fetchEntries()
+    return true
+  }, [token, fetchEntries, onUnauthorized])
+
+  /**
+   * Eintrag löschen.
+   * 
+   * @param id - ID des zu löschenden Eintrags
+   * @returns true bei Erfolg, false bei Fehler
+   */
+  const deleteEntry = useCallback(async (id: number): Promise<boolean> => {
+    setLoading(true)
+    setError('')
+
+    const { error: apiError, status } = await entriesApi.delete(token, id)
+
+    setLoading(false)
+
+    if (status === 401) {
+      onUnauthorized?.()
+      return false
+    }
+
+    if (apiError) {
+      setError(apiError)
+      return false
+    }
+
+    // Optimistic Update: Eintrag sofort aus lokaler Liste entfernen
+    setEntries((prev) => prev.filter((e) => e.id !== id))
+    return true
+  }, [token, onUnauthorized])
+
+  /**
    * Fehler manuell zurücksetzen.
    */
   const clearError = useCallback(() => {
@@ -129,6 +191,8 @@ export function useEntries(token: string, onUnauthorized?: () => void): UseEntri
     error,
     fetchEntries,
     addEntry,
+    updateEntry,
+    deleteEntry,
     clearError,
   }
 }
